@@ -1,0 +1,410 @@
+/* Additional custom styles can go here */
+
+/* Clean global styles - prevent horizontal overflow only */
+html, body {
+  overflow-x: hidden;
+  width: 100%;
+  max-width: 100vw;
+}
+
+/* Ensure main content doesn't overflow */
+.App {
+  overflow-x: hidden;
+  width: 100%;
+  max-width: 100vw;
+}
+
+/* Main content area */
+.main {
+  padding-top: 0;
+  min-height: 100vh;
+}
+
+/* Header specific styles */
+.header-fixed {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 9999 !important;
+  height: 80px;
+}
+
+/* Ensure dropdowns appear above everything */
+.dropdown-menu,
+[data-dropdown] {
+  z-index: 99999 !important;
+}
+
+/* Fix for profile dropdown positioning */
+.profile-dropdown {
+  position: fixed !important;
+  top: 80px !important;
+  right: 20px !important;
+  z-index: 999999 !important;
+  margin-top: 0 !important;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25) !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  transform: translateY(0) !important;
+  background: white !important;
+  min-width: 200px !important;
+  border-radius: 8px !important;
+}
+
+/* Ensure header container allows dropdown overflow */
+.header-container {
+  position: relative !important;
+  overflow: visible !important;
+}
+
+/* Fix dropdown parent positioning */
+.dropdown-parent {
+  position: relative !important;
+  z-index: 999999 !important;
+}
+
+/* Ensure header has proper z-index */
+.header-fixed {
+  z-index: 999998 !important;
+  background: rgba(34, 59, 81, 0.90) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+/* Fix for dropdown appearing above everything */
+.profile-dropdown * {
+  z-index: 999999 !important;
+}
+
+/* Ensure dropdown appears above hero sections */
+.profile-dropdown {
+  position: fixed !important;
+  top: 80px !important;
+  right: 20px !important;
+}
+
+/* Hero sections should start from top without gap */
+.hero-section {
+  padding-top: 80px !important;
+  margin-top: 0 !important;
+}
+
+/* Remove default padding from pages */
+.pt-16,
+.pt-20 {
+  padding-top: 80px !important;
+}
+
+/* Ensure no gap between header and content */
+.main > * {
+  margin-top: 0 !important;
+}
+
+/* Fix for specific page layouts */
+.page-content {
+  padding-top: 0 !important;
+  margin-top: 0 !important;
+}
+
+/* Mobile Responsiveness Fixes */
+@media (max-width: 768px) {
+  /* Fix mobile header height and positioning */
+  .header-fixed {
+    height: 70px !important;
+    background: rgba(34, 59, 81, 0.95) !important;
+    backdrop-filter: blur(8px) !important;
+  }
+  
+  /* Adjust hero section padding for mobile */
+  .hero-section {
+    padding-top: 70px !important;
+    margin-top: 0 !important;
+  }
+  
+  /* Remove any extra padding/margins that cause gaps */
+  .pt-16,
+  .pt-20 {
+    padding-top: 70px !important;
+  }
+  
+  /* Fix profile dropdown positioning */
+  .profile-dropdown {
+    right: 10px !important;
+    left: 10px !important;
+    width: calc(100% - 20px) !important;
+    min-width: auto !important;
+    top: 70px !important;
+  }
+  
+  /* Prevent horizontal scroll on mobile */
+  body, html {
+    overflow-x: hidden !important;
+    width: 100vw !important;
+    max-width: 100vw !important;
+  }
+  
+  /* Fix container widths on mobile */
+  .container, .container-fluid {
+    max-width: 100vw !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+    overflow-x: hidden !important;
+  }
+  
+  /* Ensure sections don't cause horizontal scroll */
+  section {
+    overflow-x: hidden !important;
+    max-width: 100vw !important;
+  }
+  
+  /* Fix grid layouts on mobile */
+  .grid {
+    overflow-x: hidden !important;
+  }
+  
+  /* Remove extra margins/padding that cause scrolling */
+  * {
+    box-sizing: border-box !important;
+  }
+  
+  /* Fix mobile navigation */
+  .mobile-menu-open {
+    overflow: hidden !important;
+    position: fixed !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    top: 0 !important;
+    left: 0 !important;
+  }
+  
+  /* Additional mobile fixes */
+  .mobile-menu-open * {
+    max-width: 100vw !important;
+  }
+  
+  /* Fix mobile hero sections */
+  .hero-section section {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  
+  /* Prevent text overflow on mobile */
+  h1, h2, h3, h4, h5, h6 {
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+  }
+  
+  /* Fix mobile buttons */
+  button, .btn {
+    min-height: 44px !important;
+    touch-action: manipulation !important;
+  }
+  
+  /* Improve mobile touch targets */
+  a, button, input, select, textarea {
+    min-height: 44px !important;
+    min-width: 44px !important;
+  }
+  
+  /* Fix mobile form elements */
+  input, select, textarea {
+    font-size: 16px !important; /* Prevents zoom on iOS */
+  }
+  
+  /* Mobile-specific animations */
+  .mobile-menu-open .hero-section {
+    transform: none !important;
+    animation: none !important;
+  }
+}
+
+/* Hero section adjustments */
+.hero-section {
+  position: relative;
+  z-index: 1;
+}
+
+/* Ensure buttons and interactive elements are properly styled */
+button, .btn {
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border: none;
+  outline: none;
+}
+
+button:focus, .btn:focus {
+  outline: 2px solid rgba(59, 130, 246, 0.5);
+  outline-offset: 2px;
+}
+
+button:disabled, .btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Fix for any container overflow issues */
+.container, .container-fluid {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* Ensure all sections don't cause horizontal overflow */
+section {
+  overflow-x: hidden;
+}
+
+/* Fix for grid and flex containers */
+.grid, .flex {
+  min-width: 0;
+}
+
+/* Responsive image fixes */
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Smooth scrolling for anchor links */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Admin Dashboard Mobile Responsiveness */
+.admin-dashboard {
+  overflow: hidden !important;
+}
+
+.admin-dashboard .sidebar {
+  transition: transform 0.3s ease !important;
+}
+
+@media (max-width: 768px) {
+  /* Admin Dashboard Mobile Styles */
+  .admin-dashboard .sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    height: 100vh !important;
+    z-index: 50 !important;
+    transform: translateX(-100%) !important;
+  }
+  
+  .admin-dashboard .sidebar.open {
+    transform: translateX(0) !important;
+  }
+  
+  .admin-dashboard .main-content {
+    margin-left: 0 !important;
+    width: 100% !important;
+  }
+  
+  .admin-dashboard .top-nav {
+    padding: 0.75rem 1rem !important;
+  }
+  
+  .admin-dashboard .dashboard-content {
+    padding: 1rem !important;
+    overflow-x: hidden !important;
+  }
+  
+  /* Admin tables responsive */
+  .admin-table-container {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+  
+  .admin-table {
+    min-width: 600px !important;
+  }
+  
+  /* Admin cards responsive */
+  .admin-card {
+    margin-bottom: 1rem !important;
+  }
+  
+  .admin-stats-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 0.75rem !important;
+  }
+}
+
+/* Clean scrollbar styling - remove annoying extra scrolls */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(155, 155, 155, 0.3);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(155, 155, 155, 0.6);
+}
+
+/* Hide scrollbars on mobile for cleaner experience */
+@media (max-width: 768px) {
+  ::-webkit-scrollbar {
+    display: none;
+  }
+  
+  * {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* Additional mobile optimizations */
+@media (max-width: 480px) {
+  /* Extra small mobile devices */
+  .header-fixed {
+    height: 65px !important;
+  }
+  
+  .hero-section {
+    padding-top: 65px !important;
+  }
+  
+  .pt-16, .pt-20 {
+    padding-top: 65px !important;
+  }
+  
+  .profile-dropdown {
+    top: 65px !important;
+  }
+  
+  /* Reduce padding on very small screens */
+  .container, .container-fluid {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+  
+  /* Optimize text sizes for small screens */
+  h1 {
+    font-size: 1.8rem !important;
+    line-height: 1.2 !important;
+  }
+  
+  h2 {
+    font-size: 1.5rem !important;
+  }
+  
+  /* Improve mobile menu width on very small screens */
+  .mobile-menu-panel {
+    width: 85% !important;
+    min-width: 250px !important;
+  }
+  
+  /* Admin dashboard extra small screens */
+  .admin-dashboard .dashboard-content {
+    padding: 0.75rem !important;
+  }
+  
+  .admin-stats-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
