@@ -62,9 +62,13 @@ class UserController {
         return next(new ApiError('User not found', 404));
       }
 
+      // Exclude sensitive fields
+      const userData = user.toJSON();
+      delete userData.password;
+
       res.json({
         success: true,
-        data: user
+        data: userData
       });
     } catch (error) {
       next(error);

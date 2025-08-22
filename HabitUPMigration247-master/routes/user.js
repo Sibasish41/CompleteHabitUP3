@@ -18,7 +18,7 @@ const handleValidationErrors = (req, res, next) => {
 };
 
 // Get current user profile
-router.get('/profile', userController.getCurrentUser);
+router.get('/profile', authorize, userController.getCurrentUser);
 
 // Get user dashboard
 router.get('/dashboard', userController.getDashboard);

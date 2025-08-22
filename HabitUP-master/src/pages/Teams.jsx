@@ -1,11 +1,15 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion, useInView } from 'framer-motion'
+import { getTeamMembers } from '../services/contentManagementService'
 import AOS from 'aos'
 import 'aos/dist/aos.css'
 
 const Teams = () => {
   const teamsRef = useRef(null)
   const teamsInView = useInView(teamsRef, { once: true, margin: "-100px" })
+  const [teamMembers, setTeamMembers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
     AOS.init({
@@ -14,87 +18,48 @@ const Teams = () => {
       once: true,
       mirror: false
     })
+    loadTeamMembers()
   }, [])
 
-  const teamMembers = [
-    {
-      name: 'Dr. Sashi Bhusan Nayak',
-      role: 'Mentor & Research Guide',
-      workplace: 'Ravenshaw University',
-      image: 'SashiSirTeam.png',
-      description: 'Assistant Professor with expertise in behavioral psychology and habit formation research.',
-      social: {
-        twitter: '/sashi',
-        linkedin: '#',
-        instagram: '#'
-      }
-    },
-    {
-      name: 'Basudev Naik',
-      role: 'Backend Developer',
-      workplace: 'Wisen Technology',
-      image: 'BasudevProfile.jpeg',
-      description: 'Architected the robust backend systems powering HabitUP\'s analytics and personalization engine.',
-      social: {
-        twitter: '#',
-        linkedin: '#',
-        github: '#'
-      }
-    },
-    {
-      name: 'Swastik Behera',
-      role: 'FullStack Developer',
-      workplace: 'Deloitte USI',
-      image: 'SwastikTeam.jpg',
-      description: 'Crafted the intuitive interface and visual design language of HabitUP.',
-      social: {
-        twitter: 'https://x.com/by_swastik',
-        linkedin: '#',
-        github: '#'
-      }
-    },
-    {
-      name: 'Sidharth Pradhan',
-      role: 'Frontend Developer',
-      workplace: 'Infosys Limited',
-      image: 'SidharthProfile.jpeg',
-      description: 'Specialized in creating responsive and user-friendly interfaces for optimal user experience.',
-      social: {
-        twitter: '#',
-        linkedin: '#',
-        github: '#'
-      }
-    }
-  ]
-
-  const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: {
-      opacity: 1,
-      transition: {
-        staggerChildren: 0.2,
-        delayChildren: 0.3
-      }
+  const loadTeamMembers = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      const data = await getTeamMembers()
+      setTeamMembers(data)
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to load team members')
+      console.error('Team members loading error:', err)
+    } finally {
+      setLoading(false)
     }
   }
 
-  const cardVariants = {
-    hidden: { 
-      opacity: 0, 
-      y: 50,
-      scale: 0.9
-    },
-    visible: {
-      opacity: 1,
-      y: 0,
-      scale: 1,
-      transition: {
-        type: "spring",
-        stiffness: 100,
-        damping: 15,
-        duration: 0.6
-      }
-    }
+  if (loading) {
+    return (
+      <div className="pt-20 min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading team members...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="pt-20 min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-red-500 text-lg font-semibold mb-4">{error}</div>
+          <button
+            onClick={loadTeamMembers}
+            className="bg-primary-500 text-white px-4 py-2 rounded-lg hover:bg-primary-600 transition-colors"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (

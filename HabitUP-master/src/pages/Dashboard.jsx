@@ -1,13 +1,26 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavigate } from 'react-router-dom'
+import { getUserHabits, toggleHabitCompletion, getHabitStats } from '../services/habitService'
 import AOS from 'aos'
 import 'aos/dist/aos.css'
+import { getUserProfile } from '../services/userService'
 
 const Dashboard = () => {
     const { isAuthenticated, isLoading, user } = useAuth()
     const navigate = useNavigate()
     const [habits, setHabits] = useState([])
+    const [profileData, setProfileData] = useState(null)
+    const [profileError, setProfileError] = useState(null)
+    const [stats, setStats] = useState({
+        totalHabits: 0,
+        currentStreak: 0,
+        longestStreak: 0,
+        completionRate: 0,
+        daysCompleted: 0
+    })
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState(null)
 
     useEffect(() => {
         AOS.init({
@@ -17,43 +30,39 @@ const Dashboard = () => {
             mirror: false
         })
 
-        // Load user habits
-        loadUserHabits()
+        loadUserData()
     }, [user])
 
-    const loadUserHabits = () => {
-        // Sample habits based on user type
-        const sampleHabits = [
-            { id: 1, name: 'Morning Meditation', category: 'Mindfulness', completed: true, streak: 15, progress: 85, description: 'Start day with mindfulness' },
-            { id: 2, name: 'Daily Exercise', category: 'Health', completed: false, streak: 8, progress: 65, description: 'Stay physically active' },
-            { id: 3, name: 'Read for 30 minutes', category: 'Learning', completed: true, streak: 22, progress: 90, description: 'Expand knowledge daily' }
-        ]
-        setHabits(sampleHabits)
-    }
+    const loadUserData = async () => {
+        try {
+            setLoading(true)
+            setError(null)
 
-    const getStats = () => {
-        const totalHabits = habits.length
-        const completedToday = habits.filter(h => h.completed).length
-        const currentStreak = Math.max(...habits.map(h => h.streak), 0)
-        const completionRate = totalHabits > 0 ? Math.round((completedToday / totalHabits) * 100) : 0
+            // Fetch habits and stats in parallel
+            const [habitsData, statsData] = await Promise.all([
+                getUserHabits(),
+                getHabitStats()
+            ])
 
-        return {
-            totalHabits,
-            currentStreak,
-            longestStreak: currentStreak + 5,
-            completionRate,
-            daysCompleted: 18
+            setHabits(habitsData)
+            setStats(statsData)
+        } catch (err) {
+            setError(err.response?.data?.message || 'Failed to load dashboard data')
+            console.error('Dashboard data loading error:', err)
+        } finally {
+            setLoading(false)
         }
     }
 
-    const stats = getStats()
-
-    const toggleHabit = (habitId) => {
-        setHabits(habits.map(habit =>
-            habit.id === habitId
-                ? { ...habit, completed: !habit.completed }
-                : habit
-        ))
+    const toggleHabit = async (habitId) => {
+        try {
+            await toggleHabitCompletion(habitId)
+            // Refresh habits and stats after toggling
+            loadUserData()
+        } catch (err) {
+            console.error('Error toggling habit:', err)
+            // Optionally show error to user
+        }
     }
 
     const getGreeting = () => {
@@ -65,7 +74,7 @@ const Dashboard = () => {
         return `Good Evening, ${name}!`
     }
 
-    if (isLoading) {
+    if (isLoading || loading) {
         return (
             <div className="pt-20 min-h-screen bg-gray-50 flex items-center justify-center">
                 <div className="text-center">
@@ -79,6 +88,22 @@ const Dashboard = () => {
     if (!isAuthenticated) {
         navigate('/')
         return null
+    }
+
+    if (error) {
+        return (
+            <div className="pt-20 min-h-screen bg-gray-50 flex items-center justify-center">
+                <div className="text-center">
+                    <div className="text-red-500 text-lg font-semibold mb-4">{error}</div>
+                    <button
+                        onClick={loadUserData}
+                        className="bg-primary-500 text-white px-4 py-2 rounded-lg hover:bg-primary-600 transition-colors"
+                    >
+                        Try Again
+                    </button>
+                </div>
+            </div>
+        )
     }
 
     return (

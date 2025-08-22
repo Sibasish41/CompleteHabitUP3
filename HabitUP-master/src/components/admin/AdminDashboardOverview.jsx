@@ -1,107 +1,46 @@
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
+import { getAdminDashboardStats, getRecentActivity } from '../../services/adminService'
+import { getSocialMediaLinks, getQuickActions } from '../../services/systemSettingsService'
 
 const AdminDashboardOverview = ({ isDemoMode }) => {
   const navigate = useNavigate()
-  const stats = [
-    {
-      title: 'Total Users',
-      value: '1,248',
-      change: '+12.5%',
-      changeType: 'positive',
-      icon: 'fas fa-users',
-      color: 'primary'
-    },
-    {
-      title: 'Active Subscriptions',
-      value: '856',
-      change: '+8.3%',
-      changeType: 'positive',
-      icon: 'fas fa-credit-card',
-      color: 'success'
-    },
-    {
-      title: 'Pending Actions',
-      value: '24',
-      change: '-2',
-      changeType: 'negative',
-      icon: 'fas fa-exclamation-circle',
-      color: 'warning'
-    },
-    {
-      title: 'System Health',
-      value: '98.7%',
-      change: 'All systems operational',
-      changeType: 'positive',
-      icon: 'fas fa-heartbeat',
-      color: 'info'
-    }
-  ]
+  const [stats, setStats] = useState([])
+  const [recentActivity, setRecentActivity] = useState([])
+  const [socialLinks, setSocialLinks] = useState([])
+  const [quickActions, setQuickActions] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
-  const recentActivity = [
-    {
-      user: 'john.doe@example.com',
-      action: 'Updated subscription plan',
-      time: '10 mins ago',
-      status: 'Completed',
-      statusType: 'active'
-    },
-    {
-      user: 'jane.smith@example.com',
-      action: 'Password reset request',
-      time: '25 mins ago',
-      status: 'Pending',
-      statusType: 'pending'
-    },
-    {
-      user: 'mike.johnson@example.com',
-      action: 'Account deactivated',
-      time: '1 hour ago',
-      status: 'Completed',
-      statusType: 'inactive'
-    },
-    {
-      user: 'sarah.williams@example.com',
-      action: 'New subscription',
-      time: '2 hours ago',
-      status: 'Completed',
-      statusType: 'active'
-    },
-    {
-      user: 'admin@habitup.com',
-      action: 'System settings updated',
-      time: '3 hours ago',
-      status: 'Completed',
-      statusType: 'active'
-    }
-  ]
+  useEffect(() => {
+    loadDashboardData()
+  }, [])
 
-  const quickActions = [
-    {
-      title: 'Add New User',
-      description: 'Create new user account',
-      icon: 'fas fa-user-plus',
-      color: 'text-purple-600',
-      action: 'users',
-      path: '/admin/users'
-    },
-    {
-      title: 'Manage Subscriptions',
-      description: 'View and edit subscriptions',
-      icon: 'fas fa-credit-card',
-      color: 'text-green-600',
-      action: 'subscriptions',
-      path: '/admin/subscriptions'
-    },
-    {
-      title: 'View System Logs',
-      description: 'Check system activity',
-      icon: 'fas fa-clipboard-list',
-      color: 'text-blue-600',
-      action: 'logs',
-      path: '/admin/logs'
+  const loadDashboardData = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      // Fetch all dashboard data in parallel
+      const [statsData, activityData, socialData, actionsData] = await Promise.all([
+        getAdminDashboardStats(),
+        getRecentActivity(),
+        getSocialMediaLinks(),
+        getQuickActions()
+      ])
+
+      setStats(statsData)
+      setRecentActivity(activityData)
+      setSocialLinks(socialData)
+      setQuickActions(actionsData)
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to load dashboard data')
+      console.error('Dashboard data loading error:', err)
+    } finally {
+      setLoading(false)
     }
-  ]
+  }
 
   const handleQuickAction = (action) => {
     navigate(action.path)
@@ -126,6 +65,33 @@ const AdminDashboardOverview = ({ isDemoMode }) => {
     return statuses[statusType] || 'bg-gray-100 text-gray-800'
   }
 
+  if (loading) {
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading dashboard data...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-red-500 text-lg font-semibold mb-4">{error}</div>
+          <button
+            onClick={loadDashboardData}
+            className="bg-primary-500 text-white px-4 py-2 rounded-lg hover:bg-primary-600 transition-colors"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-8">
       {/* Page Title */}
@@ -144,97 +110,67 @@ const AdminDashboardOverview = ({ isDemoMode }) => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat, index) => (
           <motion.div
-            key={index}
-            className={`bg-white rounded-lg p-6 shadow-sm border-l-4 ${getColorClasses(stat.color)} hover:shadow-md transition-shadow duration-300 relative overflow-hidden`}
+            key={stat.title}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: index * 0.1 }}
-            whileHover={{ y: -5 }}
+            transition={{ delay: index * 0.1 }}
+            className="bg-white rounded-lg shadow-lg p-6 hover:shadow-xl transition-shadow"
           >
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-medium text-gray-600 mb-2">{stat.title}</h3>
-                <div className="text-2xl font-bold text-gray-800 mb-1">{stat.value}</div>
-                <div className={`text-xs flex items-center ${
-                  stat.changeType === 'positive' ? 'text-green-600' : 'text-red-600'
-                }`}>
-                  <i className={`fas ${
-                    stat.changeType === 'positive' ? 'fa-arrow-up' : 'fa-arrow-down'
-                  } mr-1`}></i>
-                  {stat.change}
-                </div>
+            <div className="flex items-center justify-between mb-4">
+              <div className={`text-2xl text-${stat.color}-500`}>
+                <i className={stat.icon}></i>
               </div>
-              <i className={`${stat.icon} text-3xl text-gray-300`}></i>
+              <div className={`text-sm px-2 py-1 rounded-full ${
+                stat.changeType === 'positive' 
+                  ? 'bg-green-100 text-green-800'
+                  : 'bg-red-100 text-red-800'
+              }`}>
+                {stat.change}
+              </div>
             </div>
+            <h3 className="text-gray-600 text-sm">{stat.title}</h3>
+            <div className="text-2xl font-bold text-gray-800 mt-2">{stat.value}</div>
           </motion.div>
         ))}
       </div>
 
       {/* Recent Activity */}
-      <motion.div
-        className="bg-white rounded-lg shadow-sm"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, delay: 0.4 }}
-      >
-        <div className="p-6 border-b border-gray-200">
-          <div className="flex justify-between items-center">
-            <h3 className="text-lg font-semibold text-gray-800">Recent Activity</h3>
-            <button className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700 transition-colors flex items-center">
-              <i className="fas fa-sync-alt mr-2"></i>
-              Refresh
-            </button>
-          </div>
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        <h2 className="text-xl font-semibold mb-4">Recent Activity</h2>
+        <div className="space-y-4">
+          {recentActivity.map((activity, index) => (
+            <motion.div
+              key={index}
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: index * 0.1 }}
+              className="flex items-center justify-between p-4 bg-gray-50 rounded-lg"
+            >
+              <div className="flex items-center space-x-4">
+                <div className="text-gray-600">
+                  <i className="fas fa-user-circle text-xl"></i>
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-gray-800">{activity.user}</div>
+                  <div className="text-sm text-gray-600">{activity.action}</div>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-sm text-gray-500">{activity.time}</div>
+                <div className={`text-sm ${
+                  activity.statusType === 'active' 
+                    ? 'text-green-600' 
+                    : 'text-yellow-600'
+                }`}>
+                  {activity.status}
+                </div>
+              </div>
+            </motion.div>
+          ))}
         </div>
-        
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {recentActivity.map((activity, index) => (
-                <motion.tr
-                  key={index}
-                  className="hover:bg-purple-50 transition-colors"
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.3, delay: 0.5 + index * 0.1 }}
-                >
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{activity.user}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{activity.action}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{activity.time}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusClasses(activity.statusType)}`}>
-                      {activity.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <div className="flex space-x-2">
-                      <button className="w-8 h-8 bg-green-100 text-green-600 rounded-full flex items-center justify-center hover:bg-green-200 transition-colors">
-                        <i className="fas fa-eye text-xs"></i>
-                      </button>
-                      {activity.statusType === 'pending' && (
-                        <button className="w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center hover:bg-blue-200 transition-colors">
-                          <i className="fas fa-edit text-xs"></i>
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </motion.div>
+      </div>
 
-      {/* Quick Actions */}
+      {/* Quick Actions - Now using data from backend */}
       <motion.div
         className="bg-white rounded-lg shadow-sm p-6"
         initial={{ opacity: 0, y: 20 }}
@@ -245,13 +181,13 @@ const AdminDashboardOverview = ({ isDemoMode }) => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {quickActions.map((action, index) => (
             <motion.div
-              key={index}
+              key={action.id}
               className="p-6 border border-gray-200 rounded-lg hover:shadow-md transition-shadow cursor-pointer group"
               whileHover={{ y: -5 }}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: 0.7 + index * 0.1 }}
-              onClick={() => handleQuickAction(action)}
+              onClick={() => navigate(action.path)}
             >
               <div className="flex items-center justify-center w-12 h-12 bg-gray-100 rounded-lg mb-4 group-hover:scale-110 transition-transform">
                 <i className={`${action.icon} text-xl ${action.color}`}></i>
@@ -263,7 +199,7 @@ const AdminDashboardOverview = ({ isDemoMode }) => {
         </div>
       </motion.div>
 
-      {/* External Links & Social Media */}
+      {/* Social Media Links - Now using data from backend */}
       <motion.div
         className="bg-white rounded-lg shadow-sm p-6"
         initial={{ opacity: 0, y: 20 }}
@@ -272,42 +208,18 @@ const AdminDashboardOverview = ({ isDemoMode }) => {
       >
         <h3 className="text-lg font-semibold text-gray-800 mb-4">Connect & Support</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <a
-            href="https://twitter.com/habitup"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center p-3 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-          >
-            <i className="fab fa-twitter text-blue-500 mr-3"></i>
-            <span className="text-sm font-medium text-blue-700">Twitter</span>
-          </a>
-          <a
-            href="https://facebook.com/habitup"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center p-3 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-          >
-            <i className="fab fa-facebook text-blue-600 mr-3"></i>
-            <span className="text-sm font-medium text-blue-700">Facebook</span>
-          </a>
-          <a
-            href="https://linkedin.com/company/habitup"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center p-3 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-          >
-            <i className="fab fa-linkedin text-blue-700 mr-3"></i>
-            <span className="text-sm font-medium text-blue-700">LinkedIn</span>
-          </a>
-          <a
-            href="https://instagram.com/habitup"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center p-3 bg-pink-50 rounded-lg hover:bg-pink-100 transition-colors"
-          >
-            <i className="fab fa-instagram text-pink-600 mr-3"></i>
-            <span className="text-sm font-medium text-pink-700">Instagram</span>
-          </a>
+          {socialLinks.map((link, index) => (
+            <a
+              key={link.id}
+              href={link.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`flex items-center p-3 ${link.bgClass} rounded-lg hover:${link.hoverClass} transition-colors`}
+            >
+              <i className={`${link.icon} ${link.iconColor} mr-3`}></i>
+              <span className={`text-sm font-medium ${link.textColor}`}>{link.platform}</span>
+            </a>
+          ))}
         </div>
       </motion.div>
 
@@ -321,9 +233,9 @@ const AdminDashboardOverview = ({ isDemoMode }) => {
           <div className="flex items-center">
             <i className="fas fa-info-circle text-blue-600 mr-3"></i>
             <div>
-              <h3 className="font-semibold text-blue-800">Demo Dashboard</h3>
+              <h3 className="font-semibold text-blue-800">Demo Mode Active</h3>
               <p className="text-blue-700 text-sm">
-                This dashboard shows sample data for demonstration purposes. All statistics and activities are mock data.
+                You are viewing the dashboard in demo mode. Some features may be limited.
               </p>
             </div>
           </div>

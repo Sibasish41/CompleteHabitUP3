@@ -1,32 +1,28 @@
 import { useState, useEffect } from 'react'
 import AOS from 'aos'
 import 'aos/dist/aos.css'
+import { getUserProfile, updateUserProfile } from '../services/userService'
+import { getUserHabits } from '../services/habitService'
+import { getUserAchievements } from '../services/achievementService'
+import { useNavigate } from 'react-router-dom'
 
 const Profile = () => {
   const [activeTab, setActiveTab] = useState('profile')
+  const [loading, setLoading] = useState(true)
   const [profileData, setProfileData] = useState({
-    name: 'John Doe',
-    email: 'john.doe@example.com',
-    phone: '+1 234 567 8900',
-    bio: 'Passionate about building better habits and personal growth.',
-    location: 'New York, USA',
-    joinDate: '2024-01-15',
-    avatar: '/img/user.png'
+    name: '',
+    email: '',
+    phone: '',
+    bio: '',
+    location: '',
+    joinDate: '',
+    avatar: ''
   })
-
-  const [habits, setHabits] = useState([
-    { id: 1, name: 'Morning Meditation', streak: 15, status: 'active' },
-    { id: 2, name: 'Daily Exercise', streak: 8, status: 'active' },
-    { id: 3, name: 'Read for 30 minutes', streak: 22, status: 'active' },
-    { id: 4, name: 'Drink 8 glasses of water', streak: 5, status: 'paused' }
-  ])
-
-  const [achievements, setAchievements] = useState([
-    { id: 1, title: 'First Week', description: 'Completed your first week of habits', icon: 'fas fa-trophy', earned: true },
-    { id: 2, title: 'Streak Master', description: 'Maintained a 30-day streak', icon: 'fas fa-fire', earned: false },
-    { id: 3, title: 'Early Bird', description: 'Completed morning habits for 7 days', icon: 'fas fa-sun', earned: true },
-    { id: 4, title: 'Consistency King', description: 'No missed days for 2 weeks', icon: 'fas fa-crown', earned: true }
-  ])
+  const [habits, setHabits] = useState([])
+  const [achievements, setAchievements] = useState([])
+  const [profileError, setProfileError] = useState(null)
+  const [updateStatus, setUpdateStatus] = useState({ loading: false, error: null })
+  const navigate = useNavigate()
 
   useEffect(() => {
     AOS.init({
@@ -35,7 +31,45 @@ const Profile = () => {
       once: true,
       mirror: false
     })
+    loadProfileData()
   }, [])
+
+  const loadProfileData = async () => {
+    try {
+      setLoading(true)
+      setProfileError(null)
+
+      // Fetch all data in parallel
+      const [profileResult, habitsResult, achievementsResult] = await Promise.all([
+        getUserProfile(),
+        getUserHabits(),
+        getUserAchievements()
+      ])
+
+      setProfileData({
+        name: profileResult.name,
+        email: profileResult.email,
+        phone: profileResult.phoneNo,
+        bio: profileResult.bio || '',
+        location: profileResult.location || '',
+        joinDate: profileResult.joinDate,
+        avatar: profileResult.profilePhoto || '/img/default-avatar.png'
+      })
+
+      setHabits(habitsResult)
+      setAchievements(achievementsResult)
+    } catch (err) {
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        setProfileError('You are not authorized. Please log in again.')
+        navigate('/login')
+      } else {
+        setProfileError('Failed to load profile data. Please try again later.')
+      }
+      console.error('Error loading profile:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const handleInputChange = (e) => {
     setProfileData({
@@ -44,10 +78,19 @@ const Profile = () => {
     })
   }
 
-  const handleSaveProfile = (e) => {
+  const handleSaveProfile = async (e) => {
     e.preventDefault()
-    console.log('Profile saved:', profileData)
-    // Handle save logic here
+    try {
+      setUpdateStatus({ loading: true, error: null })
+      await updateUserProfile(profileData)
+      setUpdateStatus({ loading: false, error: null })
+      // Show success message or notification
+    } catch (err) {
+      setUpdateStatus({
+        loading: false,
+        error: err.response?.data?.message || 'Failed to update profile'
+      })
+    }
   }
 
   const tabs = [
@@ -56,6 +99,33 @@ const Profile = () => {
     { id: 'achievements', label: 'Achievements', icon: 'fas fa-trophy' },
     { id: 'settings', label: 'Settings', icon: 'fas fa-cog' }
   ]
+
+  if (loading) {
+    return (
+      <div className="pt-20 min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading your profile...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (profileError) {
+    return (
+      <div className="pt-20 min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-red-500 text-lg font-semibold mb-4">{profileError}</div>
+          <button
+            onClick={loadProfileData}
+            className="bg-primary-500 text-white px-4 py-2 rounded-lg hover:bg-primary-600 transition-colors"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="hero-section min-h-screen bg-gray-50">
