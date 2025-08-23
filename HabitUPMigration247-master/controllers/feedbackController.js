@@ -49,60 +49,19 @@ class FeedbackController {
     try {
       const { page = 1, limit = 10 } = req.query;
       const userId = req.user.userId;
+
       const offset = (parseInt(page) - 1) * parseInt(limit);
 
       const { count, rows: feedback } = await Feedback.findAndCountAll({
         where: { userId },
-        order: [['submittedAt', 'DESC']],
-        limit: parseInt(limit),
-        offset
-      });
-
-      res.json({
-        success: true,
-        data: {
-          feedback,
-          pagination: {
-            currentPage: parseInt(page),
-            totalPages: Math.ceil(count / parseInt(limit)),
-            totalFeedback: count,
-            limit: parseInt(limit)
-          }
-        }
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  // Get all feedback (Admin only)
-  async getAllFeedback(req, res, next) {
-    try {
-      const {
-        page = 1,
-        limit = 10,
-        status,
-        feedbackType,
-        priority
-      } = req.query;
-
-      const offset = (parseInt(page) - 1) * parseInt(limit);
-      const whereClause = {};
-
-      if (status) whereClause.status = status;
-      if (feedbackType) whereClause.feedbackType = feedbackType;
-      if (priority) whereClause.priority = priority;
-
-      const { count, rows: feedback } = await Feedback.findAndCountAll({
-        where: whereClause,
         include: [{
           model: User,
-          as: 'user',
-          attributes: ['userId', 'name', 'email']
+          attributes: ['name', 'email'],
+          where: { userId }
         }],
-        order: [['submittedAt', 'DESC']],
         limit: parseInt(limit),
-        offset
+        offset,
+        order: [['createdAt', 'DESC']]
       });
 
       res.json({
@@ -110,10 +69,9 @@ class FeedbackController {
         data: {
           feedback,
           pagination: {
-            currentPage: parseInt(page),
-            totalPages: Math.ceil(count / parseInt(limit)),
-            totalFeedback: count,
-            limit: parseInt(limit)
+            total: count,
+            page: parseInt(page),
+            totalPages: Math.ceil(count / parseInt(limit))
           }
         }
       });
@@ -122,16 +80,23 @@ class FeedbackController {
     }
   }
 
-  // Get specific feedback by ID
+  // Get feedback by ID
   async getFeedbackById(req, res, next) {
     try {
       const { feedbackId } = req.params;
+      const userId = req.user.userId;
 
-      const feedback = await Feedback.findByPk(feedbackId, {
+      const feedback = await Feedback.findOne({
+        where: {
+          id: feedbackId,
+          [Op.or]: [
+            { userId },
+            { '$User.role$': 'ADMIN' }
+          ]
+        },
         include: [{
           model: User,
-          as: 'user',
-          attributes: ['userId', 'name', 'email']
+          attributes: ['name', 'email', 'role']
         }]
       });
 
@@ -152,8 +117,7 @@ class FeedbackController {
   async updateFeedbackStatus(req, res, next) {
     try {
       const { feedbackId } = req.params;
-      const { status, adminResponse, priority } = req.body;
-      const adminId = req.user.userId;
+      const { status, adminResponse } = req.body;
 
       const feedback = await Feedback.findByPk(feedbackId);
 
@@ -161,19 +125,21 @@ class FeedbackController {
         return next(new ApiError('Feedback not found', 404));
       }
 
-      const updateData = { status };
-      if (adminResponse) {
-        updateData.adminResponse = adminResponse;
-        updateData.adminId = adminId;
-        updateData.responseDate = new Date();
-      }
-      if (priority) updateData.priority = priority;
+      await feedback.update({
+        status,
+        adminResponse,
+        respondedAt: new Date(),
+        respondedBy: req.user.userId
+      });
 
-      await feedback.update(updateData);
+      // If feedback is resolved, notify the user
+      if (status === 'RESOLVED' && !feedback.isAnonymous) {
+        // Add notification logic here
+      }
 
       res.json({
         success: true,
-        message: 'Feedback updated successfully',
+        message: 'Feedback status updated successfully',
         data: feedback
       });
     } catch (error) {
@@ -181,43 +147,129 @@ class FeedbackController {
     }
   }
 
-  // Get public reviews/feedback
-  async getPublicReviews(req, res, next) {
+  // Get feedback analytics (Admin only)
+  async getFeedbackAnalytics(req, res, next) {
     try {
-      const { targetType, targetId, page = 1, limit = 10 } = req.query;
-      const offset = (parseInt(page) - 1) * parseInt(limit);
+      const { startDate, endDate } = req.query;
 
-      const whereClause = {
-        isPublic: true,
-        feedbackType: 'APP_REVIEW'
-      };
-
-      if (targetType && targetId) {
-        whereClause.targetType = targetType;
-        whereClause.targetId = targetId;
+      const whereClause = {};
+      if (startDate && endDate) {
+        whereClause.createdAt = {
+          [Op.between]: [new Date(startDate), new Date(endDate)]
+        };
       }
 
-      const { count, rows: reviews } = await Feedback.findAndCountAll({
+      // Get feedback counts by type and status
+      const typeStats = await Feedback.findAll({
         where: whereClause,
-        include: [{
-          model: User,
-          as: 'user',
-          attributes: ['name'] // Only show name for public reviews
-        }],
-        order: [['submittedAt', 'DESC']],
-        limit: parseInt(limit),
-        offset
+        attributes: [
+          'feedbackType',
+          'status',
+          [Feedback.sequelize.fn('COUNT', '*'), 'count']
+        ],
+        group: ['feedbackType', 'status']
+      });
+
+      // Get average ratings
+      const avgRatings = await Feedback.findAll({
+        where: { ...whereClause, rating: { [Op.not]: null } },
+        attributes: [
+          'targetType',
+          [Feedback.sequelize.fn('AVG', Feedback.sequelize.col('rating')), 'avgRating'],
+          [Feedback.sequelize.fn('COUNT', '*'), 'count']
+        ],
+        group: ['targetType']
+      });
+
+      // Get response time metrics
+      const responseTimes = await Feedback.findAll({
+        where: {
+          ...whereClause,
+          status: 'RESOLVED',
+          respondedAt: { [Op.not]: null }
+        },
+        attributes: [
+          [
+            Feedback.sequelize.fn(
+              'AVG',
+              Feedback.sequelize.fn(
+                'EXTRACT',
+                'EPOCH',
+                Feedback.sequelize.fn(
+                  'AGE',
+                  Feedback.sequelize.col('respondedAt'),
+                  Feedback.sequelize.col('createdAt')
+                )
+              )
+            ),
+            'avgResponseTime'
+          ]
+        ]
       });
 
       res.json({
         success: true,
         data: {
-          reviews,
+          typeStats,
+          avgRatings,
+          responseTimes: responseTimes[0]
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Get all feedback with filters (Admin only)
+  async getAllFeedback(req, res, next) {
+    try {
+      const {
+        page = 1,
+        limit = 10,
+        status,
+        type,
+        startDate,
+        endDate,
+        search
+      } = req.query;
+
+      const whereClause = {};
+
+      if (status) whereClause.status = status;
+      if (type) whereClause.feedbackType = type;
+
+      if (startDate && endDate) {
+        whereClause.createdAt = {
+          [Op.between]: [new Date(startDate), new Date(endDate)]
+        };
+      }
+
+      if (search) {
+        whereClause[Op.or] = [
+          { subject: { [Op.iLike]: `%${search}%` } },
+          { message: { [Op.iLike]: `%${search}%` } }
+        ];
+      }
+
+      const { count, rows: feedback } = await Feedback.findAndCountAll({
+        where: whereClause,
+        include: [{
+          model: User,
+          attributes: ['name', 'email']
+        }],
+        limit: parseInt(limit),
+        offset: (parseInt(page) - 1) * parseInt(limit),
+        order: [['createdAt', 'DESC']]
+      });
+
+      res.json({
+        success: true,
+        data: {
+          feedback,
           pagination: {
-            currentPage: parseInt(page),
-            totalPages: Math.ceil(count / parseInt(limit)),
-            totalReviews: count,
-            limit: parseInt(limit)
+            total: count,
+            page: parseInt(page),
+            totalPages: Math.ceil(count / parseInt(limit))
           }
         }
       });
@@ -226,52 +278,21 @@ class FeedbackController {
     }
   }
 
-  // Get feedback statistics (Admin only)
-  async getFeedbackStats(req, res, next) {
+  // Delete feedback (Admin only)
+  async deleteFeedback(req, res, next) {
     try {
-      const [
-        totalFeedback,
-        pendingFeedback,
-        resolvedFeedback,
-        averageRating,
-        feedbackByType,
-        feedbackByPriority
-      ] = await Promise.all([
-        Feedback.count(),
-        Feedback.count({ where: { status: 'PENDING' } }),
-        Feedback.count({ where: { status: 'RESOLVED' } }),
-        Feedback.findAll({
-          attributes: [
-            [sequelize.fn('AVG', sequelize.col('rating')), 'avgRating']
-          ],
-          where: { rating: { [Op.not]: null } }
-        }),
-        Feedback.findAll({
-          attributes: [
-            'feedbackType',
-            [sequelize.fn('COUNT', sequelize.col('feedbackId')), 'count']
-          ],
-          group: ['feedbackType']
-        }),
-        Feedback.findAll({
-          attributes: [
-            'priority',
-            [sequelize.fn('COUNT', sequelize.col('feedbackId')), 'count']
-          ],
-          group: ['priority']
-        })
-      ]);
+      const { feedbackId } = req.params;
+
+      const feedback = await Feedback.findByPk(feedbackId);
+      if (!feedback) {
+        return next(new ApiError('Feedback not found', 404));
+      }
+
+      await feedback.destroy();
 
       res.json({
         success: true,
-        data: {
-          totalFeedback,
-          pendingFeedback,
-          resolvedFeedback,
-          averageRating: averageRating[0]?.dataValues?.avgRating || 0,
-          feedbackByType,
-          feedbackByPriority
-        }
+        message: 'Feedback deleted successfully'
       });
     } catch (error) {
       next(error);

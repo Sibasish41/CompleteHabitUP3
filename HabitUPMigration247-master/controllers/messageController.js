@@ -1,8 +1,8 @@
-const { Message, User, Doctor } = require('../models');
+      );
 const { ApiError } = require('../middleware/errorHandler');
 const { Op } = require('sequelize');
 
-class MessageController {
+        message: 'Conversation marked as read'
   // Send a message
   async sendMessage(req, res, next) {
     try {
@@ -49,38 +49,53 @@ class MessageController {
   }
 
   // Get messages for a conversation
-  async getConversation(req, res, next) {
+  async getMessages(req, res, next) {
     try {
-      const { participantId, participantType } = req.params;
+      const { conversationId } = req.params;
       const { page = 1, limit = 50 } = req.query;
-      
       const userId = req.user.userId;
-      const userType = req.user.userType || 'USER';
 
-      const conversationId = Message.generateConversationId(
-        userId, userType, participantId, participantType
-      );
-
-      const offset = (parseInt(page) - 1) * parseInt(limit);
-
-      const messages = await Message.findAll({
+      // Verify user is part of the conversation
+      const isParticipant = await Message.findOne({
         where: {
           conversationId,
-          isDeleted: false
-        },
-        order: [['sentAt', 'DESC']],
+          [Op.or]: [
+            { senderId: userId },
+            { receiverId: userId }
+          ]
+        }
+      });
+
+      if (!isParticipant) {
+        return next(new ApiError('Not authorized to access this conversation', 403));
+      }
+
+      const { count, rows: messages } = await Message.findAndCountAll({
+        where: { conversationId },
+        include: [
+          {
+            model: User,
+            as: 'sender',
+            attributes: ['name', 'email', 'profilePhoto']
+          },
+          {
+            model: User,
+            as: 'receiver',
+            attributes: ['name', 'email', 'profilePhoto']
+          }
+        ],
+        order: [['createdAt', 'DESC']],
         limit: parseInt(limit),
-        offset
+        offset: (parseInt(page) - 1) * parseInt(limit)
       });
 
       // Mark messages as read
       await Message.update(
-        { isRead: true, readAt: new Date() },
+        { isRead: true },
         {
           where: {
             conversationId,
             receiverId: userId,
-            receiverType: userType,
             isRead: false
           }
         }
@@ -89,8 +104,12 @@ class MessageController {
       res.json({
         success: true,
         data: {
-          messages: messages.reverse(), // Reverse to show oldest first
-          conversationId
+          messages: messages.reverse(),
+          pagination: {
+            total: count,
+            page: parseInt(page),
+            totalPages: Math.ceil(count / parseInt(limit))
+          }
         }
       });
     } catch (error) {
@@ -98,94 +117,97 @@ class MessageController {
     }
   }
 
-  // Get all conversations for a user
+  // Get user's conversations
   async getConversations(req, res, next) {
     try {
       const userId = req.user.userId;
-      const userType = req.user.userType || 'USER';
+      const { page = 1, limit = 20 } = req.query;
 
       const conversations = await Message.findAll({
-        where: {
-          [Op.or]: [
-            { senderId: userId, senderType: userType },
-            { receiverId: userId, receiverType: userType }
-          ],
-          isDeleted: false
-        },
         attributes: [
           'conversationId',
-          'senderId',
-          'senderType',
-          'receiverId',
-          'receiverType',
-          'messageContent',
-          'sentAt',
-          'isRead'
+          [sequelize.fn('MAX', sequelize.col('createdAt')), 'lastMessageTime']
         ],
-        order: [['sentAt', 'DESC']],
-        group: ['conversationId']
+        where: {
+          [Op.or]: [
+            { senderId: userId },
+            { receiverId: userId }
+          ]
+        },
+        group: ['conversationId'],
+        order: [[sequelize.fn('MAX', sequelize.col('createdAt')), 'DESC']],
+        limit: parseInt(limit),
+        offset: (parseInt(page) - 1) * parseInt(limit)
       });
 
-      // Get participant details for each conversation
-      const conversationList = await Promise.all(
-        conversations.map(async (msg) => {
-          let participant;
-          const isUserSender = msg.senderId === userId && msg.senderType === userType;
-          
-          const participantId = isUserSender ? msg.receiverId : msg.senderId;
-          const participantType = isUserSender ? msg.receiverType : msg.senderType;
+      const conversationsWithDetails = await Promise.all(
+        conversations.map(async (conv) => {
+          const lastMessage = await Message.findOne({
+            where: { conversationId: conv.conversationId },
+            order: [['createdAt', 'DESC']],
+            include: [
+              {
+                model: User,
+                as: 'sender',
+                attributes: ['name', 'email', 'profilePhoto']
+              },
+              {
+                model: User,
+                as: 'receiver',
+                attributes: ['name', 'email', 'profilePhoto']
+              }
+            ]
+          });
 
-          if (participantType === 'DOCTOR') {
-            participant = await Doctor.findByPk(participantId, {
-              attributes: ['doctorId', 'name', 'specialization', 'profilePhoto']
-            });
-          } else if (participantType === 'USER') {
-            participant = await User.findByPk(participantId, {
-              attributes: ['userId', 'name', 'profilePhoto']
-            });
-          }
+          const unreadCount = await Message.count({
+            where: {
+              conversationId: conv.conversationId,
+              receiverId: userId,
+              isRead: false
+            }
+          });
 
           return {
-            conversationId: msg.conversationId,
-            participant,
-            participantType,
-            lastMessage: msg.messageContent,
-            lastMessageTime: msg.sentAt,
-            isRead: msg.isRead
+            ...conv.toJSON(),
+            lastMessage,
+            unreadCount
           };
         })
       );
 
       res.json({
         success: true,
-        data: conversationList
+        data: conversationsWithDetails
       });
     } catch (error) {
       next(error);
     }
   }
 
-  // Delete a message
+  // Delete message (soft delete)
   async deleteMessage(req, res, next) {
     try {
       const { messageId } = req.params;
       const userId = req.user.userId;
-      const userType = req.user.userType || 'USER';
 
-      const message = await Message.findByPk(messageId);
+      const message = await Message.findOne({
+        where: {
+          id: messageId,
+          [Op.or]: [
+            { senderId: userId },
+            { receiverId: userId }
+          ]
+        }
+      });
 
       if (!message) {
         return next(new ApiError('Message not found', 404));
       }
 
-      // Check if user is sender
-      if (message.senderId !== userId || message.senderType !== userType) {
-        return next(new ApiError('Unauthorized to delete this message', 403));
-      }
-
       await message.update({
-        isDeleted: true,
-        deletedAt: new Date()
+        deletedFor: message.deletedFor ?
+          [...new Set([...message.deletedFor, userId])] :
+          [userId]
       });
 
       res.json({
@@ -197,18 +219,41 @@ class MessageController {
     }
   }
 
-  // Get unread message count
+  // Get unread messages count
   async getUnreadCount(req, res, next) {
     try {
       const userId = req.user.userId;
-      const userType = req.user.userType || 'USER';
 
-      const unreadCount = await Message.count({
+      const count = await Message.count({
         where: {
           receiverId: userId,
-          receiverType: userType,
-          isRead: false,
-          isDeleted: false
+          isRead: false
+        }
+      });
+
+      res.json({
+        success: true,
+        data: { count }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Mark conversation as read
+  async markConversationAsRead(req, res, next) {
+    try {
+      const { conversationId } = req.params;
+      const userId = req.user.userId;
+
+      await Message.update(
+        { isRead: true },
+        {
+          where: {
+            conversationId,
+            receiverId: userId,
+            isRead: false
+          }
         }
       });
 

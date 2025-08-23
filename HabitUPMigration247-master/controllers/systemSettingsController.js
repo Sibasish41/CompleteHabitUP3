@@ -1,167 +1,92 @@
-const { SystemSetting } = require('../models');
-const { ApiError } = require('../middleware/errorHandler');
-const { Op } = require('sequelize');
-
-class SystemSettingsController {
-  // Get public settings (accessible to all users)
-  async getPublicSettings(req, res, next) {
-    try {
-      const publicSettings = await SystemSetting.getPublicSettings();
-      
-      res.json({
-        success: true,
-        data: publicSettings
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  // Get all settings (admin only)
-  async getAllSettings(req, res, next) {
-    try {
-      const { category, search, page = 1, limit = 50 } = req.query;
-      const offset = (parseInt(page) - 1) * parseInt(limit);
-      
-      const whereClause = {};
-      
-      if (category) {
-        whereClause.category = category;
-      }
-      
-      if (search) {
-        whereClause[Op.or] = [
-          { settingKey: { [Op.like]: `%${search}%` } },
-          { description: { [Op.like]: `%${search}%` } }
-        ];
-      }
-
-      const { count, rows: settings } = await SystemSetting.findAndCountAll({
-        where: whereClause,
+            { '$User.role$': 'ADMIN' }
+          ]
+        },
         include: [{
           model: require('../models').User,
           as: 'modifier',
           attributes: ['userId', 'name', 'email'],
           required: false
         }],
-        order: [['category', 'ASC'], ['settingKey', 'ASC']],
-        limit: parseInt(limit),
+const { SystemSetting } = require('../models');
+const { ApiError } = require('../middleware/errorHandler');
+const { Op } = require('sequelize');
+          required: false
+        }],
+        data: settings
         offset
       });
 
       res.json({
         success: true,
         data: {
-          settings,
-          pagination: {
-            currentPage: parseInt(page),
-            totalPages: Math.ceil(count / parseInt(limit)),
-            totalSettings: count,
-            limit: parseInt(limit)
-          }
-        }
+  // Helper method to validate setting value against data type
+  validateDataType(value, dataType) {
+    switch (dataType.toLowerCase()) {
+      case 'string':
+        return typeof value === 'string';
+      case 'number':
+        return !isNaN(Number(value));
+      case 'boolean':
+        return typeof value === 'boolean' || value === 'true' || value === 'false';
+      case 'json':
+  // Update settings (admin only)
+          JSON.parse(typeof value === 'string' ? value : JSON.stringify(value));
+          return true;
+        } catch {
+          return false;
+            returning: true
+      default:
+        return false;
+        data: updates
       });
     } catch (error) {
       next(error);
     }
   }
 
-  // Get specific setting by key
-  async getSettingByKey(req, res, next) {
-    try {
-      const { key } = req.params;
-      
-      const setting = await SystemSetting.findOne({
-        where: { settingKey: key },
-        include: [{
-          model: require('../models').User,
-          as: 'modifier',
-          attributes: ['userId', 'name', 'email'],
-          required: false
-        }]
-      });
-
-      if (!setting) {
-        return next(new ApiError('Setting not found', 404));
-      }
-
-      // Check if user has permission to view this setting
-      if (!setting.isPublic && req.user.userType !== 'ADMIN' && req.user.userType !== 'SYSTEM_ADMIN') {
-        return next(new ApiError('Access denied', 403));
-      }
-
-      res.json({
-        success: true,
-        data: setting
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  // Create or update setting (admin only)
-  async setSetting(req, res, next) {
+  // Create new setting (admin only)
+  async createSetting(req, res, next) {
     try {
       const {
         settingKey,
-        settingValue,
-        settingType = 'STRING',
-        category = 'GENERAL',
+        value,
+        category,
         description,
         isPublic = false,
-        isReadOnly = false,
-        defaultValue,
-        validationRules
+        dataType = 'string'
       } = req.body;
 
-      if (!settingKey) {
-        return next(new ApiError('Setting key is required', 400));
-      }
-
-      // Check if setting exists and is read-only
+      // Check if setting already exists
       const existingSetting = await SystemSetting.findOne({
         where: { settingKey }
       });
 
-      if (existingSetting && existingSetting.isReadOnly) {
-        return next(new ApiError('Cannot modify read-only setting', 400));
+      if (existingSetting) {
+        return next(new ApiError('Setting key already exists', 400));
       }
 
-      // Validate setting type and value
-      if (settingType === 'BOOLEAN' && !['true', 'false'].includes(String(settingValue).toLowerCase())) {
-        return next(new ApiError('Boolean setting must be true or false', 400));
+      // Validate data type
+      if (!this.validateDataType(value, dataType)) {
+        return next(new ApiError('Invalid value for specified data type', 400));
       }
 
-      if (settingType === 'NUMBER' && isNaN(Number(settingValue))) {
-        return next(new ApiError('Number setting must be a valid number', 400));
-      }
+      const setting = await SystemSetting.create({
+        settingKey,
+        value,
+        category,
+        description,
+        isPublic,
+        dataType,
+        createdBy: req.user.userId,
+        lastModifiedBy: req.user.userId
+      });
 
-      if (settingType === 'JSON') {
-        try {
-          JSON.parse(settingValue);
-        } catch {
-          return next(new ApiError('JSON setting must be valid JSON', 400));
-        }
-      }
+      // Clear settings cache
+      await SystemSetting.clearCache();
 
-      const setting = await SystemSetting.setValue(settingKey, settingValue, req.user.userId);
-      
-      // Update other properties if it's a new setting or update allowed
-      if (!existingSetting || !existingSetting.isReadOnly) {
-        await setting.update({
-          settingType,
-          category,
-          description,
-          isPublic,
-          isReadOnly,
-          defaultValue,
-          validationRules
-        });
-      }
-
-      res.json({
+      res.status(201).json({
         success: true,
-        message: 'Setting updated successfully',
+        message: 'Setting created successfully',
         data: setting
       });
     } catch (error) {
@@ -172,21 +97,25 @@ class SystemSettingsController {
   // Delete setting (admin only)
   async deleteSetting(req, res, next) {
     try {
-      const { key } = req.params;
-      
+      const { settingKey } = req.params;
+
       const setting = await SystemSetting.findOne({
-        where: { settingKey: key }
+        where: { settingKey }
       });
 
       if (!setting) {
         return next(new ApiError('Setting not found', 404));
       }
 
-      if (setting.isReadOnly) {
-        return next(new ApiError('Cannot delete read-only setting', 400));
+      // Check if setting is protected
+      if (setting.isProtected) {
+        return next(new ApiError('Cannot delete protected setting', 403));
       }
 
       await setting.destroy();
+
+      // Clear settings cache
+      await SystemSetting.clearCache();
 
       res.json({
         success: true,
@@ -201,19 +130,12 @@ class SystemSettingsController {
   async getSettingsByCategory(req, res, next) {
     try {
       const { category } = req.params;
-      const { includePrivate = false } = req.query;
-      
-      const whereClause = { category };
-      
-      // Non-admin users can only see public settings
-      if (req.user.userType !== 'ADMIN' && req.user.userType !== 'SYSTEM_ADMIN') {
-        whereClause.isPublic = true;
-      } else if (!includePrivate) {
-        whereClause.isPublic = true;
-      }
 
       const settings = await SystemSetting.findAll({
-        where: whereClause,
+        where: {
+          category,
+          [Op.or]: [
+            { isPublic: true },
         order: [['settingKey', 'ASC']]
       });
 

@@ -1,6 +1,7 @@
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
-const { User, Doctor } = require('../models');
+const { User, Doctor, Message, Habit, Meeting } = require('../models');
+const { Op } = require('sequelize');
 
 class SocketHandler {
   constructor() {
@@ -49,194 +50,211 @@ class SocketHandler {
       this.connectedUsers.set(socket.userId, socket.id);
       
       // Join user to their personal room
-      socket.join(`user_${socket.userId}`);
-      
-      // Handle joining conversation rooms
-      socket.on('join_conversation', (conversationId) => {
-        socket.join(`conversation_${conversationId}`);
-        console.log(`User ${socket.userId} joined conversation ${conversationId}`);
-      });
+      socket.join(`user:${socket.userId}`);
 
-      // Handle leaving conversation rooms
-      socket.on('leave_conversation', (conversationId) => {
-        socket.leave(`conversation_${conversationId}`);
-        console.log(`User ${socket.userId} left conversation ${conversationId}`);
-      });
-
-      // Handle real-time messaging
-      socket.on('send_message', async (data) => {
+      // Handle chat messages
+      socket.on('message:send', async (data) => {
         try {
-          const { conversationId, message, receiverId, receiverType } = data;
-          
-          // Emit to conversation room
-          socket.to(`conversation_${conversationId}`).emit('new_message', {
-            conversationId,
+          const { receiverId, message, type = 'TEXT' } = data;
+          const receiverSocket = this.connectedUsers.get(receiverId);
+
+          // Save message to database
+          const savedMessage = await Message.create({
             senderId: socket.userId,
-            senderType: socket.userType,
-            message,
-            timestamp: new Date(),
-            messageId: data.messageId
+            receiverId,
+            content: message,
+            type
           });
 
-          // Send notification to receiver if they're online
-          const receiverSocketId = this.connectedUsers.get(receiverId);
-          if (receiverSocketId) {
-            this.io.to(receiverSocketId).emit('message_notification', {
-              senderId: socket.userId,
-              senderName: socket.user.name,
-              conversationId,
-              preview: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
-              timestamp: new Date()
-            });
+          // Emit to sender and receiver
+          this.io.to(socket.id).emit('message:sent', savedMessage);
+          if (receiverSocket) {
+            this.io.to(receiverSocket).emit('message:received', savedMessage);
           }
         } catch (error) {
+          console.error('Error handling message:', error);
           socket.emit('error', { message: 'Failed to send message' });
         }
       });
 
-      // Handle habit completion notifications
-      socket.on('habit_completed', (data) => {
-        const { habitName, streakCount } = data;
-        
-        // Emit to user's personal room (for multiple devices)
-        this.io.to(`user_${socket.userId}`).emit('habit_completion_celebration', {
-          habitName,
-          streakCount,
-          message: `Great job! You completed "${habitName}"`,
-          timestamp: new Date()
+      // Handle typing indicators
+      socket.on('typing:start', ({ conversationId }) => {
+        socket.to(`conversation:${conversationId}`).emit('user:typing', {
+          userId: socket.userId,
+          conversationId
         });
       });
 
-      // Handle meeting notifications
-      socket.on('meeting_reminder', (data) => {
-        const { meetingId, participantIds, message, scheduledTime } = data;
-        
-        participantIds.forEach(participantId => {
-          const participantSocketId = this.connectedUsers.get(participantId);
-          if (participantSocketId) {
-            this.io.to(participantSocketId).emit('meeting_reminder', {
-              meetingId,
-              message,
-              scheduledTime,
-              timestamp: new Date()
+      socket.on('typing:stop', ({ conversationId }) => {
+        socket.to(`conversation:${conversationId}`).emit('user:stopped_typing', {
+          userId: socket.userId,
+          conversationId
+        });
+      });
+
+      // Handle video call signaling
+      socket.on('video:offer', (data) => {
+        const receiverSocket = this.connectedUsers.get(data.receiverId);
+        if (receiverSocket) {
+          this.io.to(receiverSocket).emit('video:offer', {
+            ...data,
+            senderId: socket.userId
+          });
+        }
+      });
+
+      socket.on('video:answer', (data) => {
+        const receiverSocket = this.connectedUsers.get(data.receiverId);
+        if (receiverSocket) {
+          this.io.to(receiverSocket).emit('video:answer', {
+            ...data,
+            senderId: socket.userId
+          });
+        }
+      });
+
+      socket.on('video:ice-candidate', (data) => {
+        const receiverSocket = this.connectedUsers.get(data.receiverId);
+        if (receiverSocket) {
+          this.io.to(receiverSocket).emit('video:ice-candidate', {
+            ...data,
+            senderId: socket.userId
+          });
+        }
+      });
+
+      // Handle joining/leaving consultations
+      socket.on('consultation:join', ({ meetingId }) => {
+        socket.join(`meeting:${meetingId}`);
+        this.io.to(`meeting:${meetingId}`).emit('user:joined', {
+          userId: socket.userId,
+          name: socket.user.name
+        });
+      });
+
+      socket.on('consultation:leave', ({ meetingId }) => {
+        socket.leave(`meeting:${meetingId}`);
+        this.io.to(`meeting:${meetingId}`).emit('user:left', {
+          userId: socket.userId,
+          name: socket.user.name
+        });
+      });
+
+      // Handle habit completion updates
+      socket.on('habit:complete', async ({ habitId }) => {
+        try {
+          const habit = await Habit.findByPk(habitId);
+          if (habit) {
+            // Broadcast to user's followers or accountability partners
+            const followers = await User.findAll({
+              include: [{
+                model: User,
+                as: 'following',
+                where: { userId: socket.userId }
+              }]
+            });
+
+            followers.forEach(follower => {
+              const followerSocket = this.connectedUsers.get(follower.userId);
+              if (followerSocket) {
+                this.io.to(followerSocket).emit('habit:completed', {
+                  userId: socket.userId,
+                  userName: socket.user.name,
+                  habitName: habit.name
+                });
+              }
             });
           }
-        });
-      });
-
-      // Handle typing indicators
-      socket.on('typing_start', (data) => {
-        const { conversationId } = data;
-        socket.to(`conversation_${conversationId}`).emit('user_typing', {
-          userId: socket.userId,
-          userName: socket.user.name,
-          conversationId
-        });
-      });
-
-      socket.on('typing_stop', (data) => {
-        const { conversationId } = data;
-        socket.to(`conversation_${conversationId}`).emit('user_stopped_typing', {
-          userId: socket.userId,
-          conversationId
-        });
-      });
-
-      // Handle online status
-      socket.on('update_status', (status) => {
-        socket.broadcast.emit('user_status_updated', {
-          userId: socket.userId,
-          status: status
-        });
+        } catch (error) {
+          console.error('Error handling habit completion:', error);
+        }
       });
 
       // Handle disconnection
       socket.on('disconnect', () => {
         console.log(`🔌 User ${socket.userId} disconnected`);
         this.connectedUsers.delete(socket.userId);
-        
-        // Notify others that user went offline
-        socket.broadcast.emit('user_offline', {
-          userId: socket.userId,
-          timestamp: new Date()
-        });
-      });
 
-      // Handle errors
-      socket.on('error', (error) => {
-        console.error(`Socket error for user ${socket.userId}:`, error);
+        // Notify relevant users about disconnection
+        this.handleUserDisconnection(socket);
       });
     });
 
     console.log('🚀 Socket.IO initialized successfully');
   }
 
-  // Utility methods for sending notifications from controllers
-  sendNotificationToUser(userId, notification) {
-    const socketId = this.connectedUsers.get(userId);
-    if (socketId) {
-      this.io.to(socketId).emit('notification', notification);
-      return true;
-    }
-    return false;
-  }
-
-  sendHabitReminder(userId, habits) {
-    const socketId = this.connectedUsers.get(userId);
-    if (socketId) {
-      this.io.to(socketId).emit('habit_reminder', {
-        habits,
-        message: `Don't forget your daily habits!`,
-        timestamp: new Date()
+  // Helper method to handle user disconnection cleanup
+  async handleUserDisconnection(socket) {
+    try {
+      // End any active consultations
+      const activeMeetings = await Meeting.findAll({
+        where: {
+          [Op.or]: [
+            { userId: socket.userId },
+            { doctorId: socket.userId }
+          ],
+          status: 'IN_PROGRESS'
+        }
       });
-      return true;
-    }
-    return false;
-  }
 
-  sendStreakCelebration(userId, habitName, streakCount) {
-    const socketId = this.connectedUsers.get(userId);
-    if (socketId) {
-      this.io.to(socketId).emit('streak_celebration', {
-        habitName,
-        streakCount,
-        message: `🔥 Amazing! ${streakCount} day streak for "${habitName}"!`,
-        timestamp: new Date()
-      });
-      return true;
-    }
-    return false;
-  }
-
-  sendMeetingNotification(userIds, meetingData) {
-    userIds.forEach(userId => {
-      const socketId = this.connectedUsers.get(userId);
-      if (socketId) {
-        this.io.to(socketId).emit('meeting_notification', {
-          ...meetingData,
-          timestamp: new Date()
+      for (const meeting of activeMeetings) {
+        this.io.to(`meeting:${meeting.id}`).emit('consultation:ended', {
+          meetingId: meeting.id,
+          reason: 'participant_disconnected'
         });
+
+        await meeting.update({ status: 'ENDED' });
       }
-    });
+
+      // Notify chat participants
+      const activeChats = await Message.findAll({
+        attributes: ['conversationId'],
+        where: {
+          [Op.or]: [
+            { senderId: socket.userId },
+            { receiverId: socket.userId }
+          ],
+          createdAt: {
+            [Op.gte]: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
+          }
+        },
+        group: ['conversationId']
+      });
+
+      activeChats.forEach(chat => {
+        this.io.to(`conversation:${chat.conversationId}`).emit('user:offline', {
+          userId: socket.userId
+        });
+      });
+    } catch (error) {
+      console.error('Error handling disconnection cleanup:', error);
+    }
   }
 
-  broadcastSystemAnnouncement(announcement) {
-    this.io.emit('system_announcement', {
-      ...announcement,
-      timestamp: new Date()
-    });
+  // Method to emit notifications
+  emitNotification(userId, notification) {
+    const userSocket = this.connectedUsers.get(userId);
+    if (userSocket) {
+      this.io.to(userSocket).emit('notification:new', notification);
+    }
   }
 
-  getConnectedUsers() {
-    return Array.from(this.connectedUsers.keys());
-  }
-
-  isUserOnline(userId) {
-    return this.connectedUsers.has(userId);
-  }
-
-  getOnlineUserCount() {
-    return this.connectedUsers.size;
+  // Method to broadcast system announcements
+  broadcastAnnouncement(message, userType = null) {
+    if (userType) {
+      // Broadcast to specific user type (e.g., 'DOCTOR', 'USER')
+      this.io.emit('system:announcement', {
+        message,
+        userType,
+        timestamp: new Date()
+      });
+    } else {
+      // Broadcast to all users
+      this.io.emit('system:announcement', {
+        message,
+        timestamp: new Date()
+      });
+    }
   }
 }
 

@@ -221,78 +221,98 @@ class UserController {
   async getDashboard(req, res, next) {
     try {
       const userId = req.user.userId;
-      const today = new Date().toISOString().split('T')[0];
 
-      // Get user habits with today's progress
-      const habits = await Habit.findAll({
+      // Fetch user with related data
+      const user = await User.findByPk(userId, {
         include: [
           {
-            model: User,
-            as: 'users',
-            where: { userId },
-            attributes: [],
-            through: { attributes: [] }
-          },
-          {
-            model: HabitProgress,
-            as: 'progress',
-            where: { 
-              userId,
-              completionDate: today
-            },
-            required: false
+            model: Habit,
+            as: 'habits',
+            where: { isActive: true },
+            required: false,
+            include: [{
+              model: HabitProgress,
+              required: false,
+              where: {
+                date: {
+                  [Op.gte]: new Date(new Date().setDate(new Date().getDate() - 30))
+                }
+              }
+            }]
           }
-        ],
-        where: { isActive: true }
+        ]
       });
 
-      // Calculate statistics
+      if (!user) {
+        return next(new ApiError('User not found', 404));
+      }
+
+      // Calculate dashboard statistics
+      const habits = user.habits || [];
       const totalHabits = habits.length;
-      const completedToday = habits.filter(h => 
-        h.progress.length > 0 && h.progress[0].completionStatus === 'COMPLETED'
-      ).length;
+      const activeHabits = habits.filter(h => h.isActive).length;
+      const completedHabits = habits.filter(h => h.isCompleted).length;
 
-      // Get weekly progress
-      const weekAgo = new Date();
-      weekAgo.setDate(weekAgo.getDate() - 7);
+      // Calculate streak and progress
+      const habitProgress = habits.map(habit => {
+        const progress = habit.HabitProgresses || [];
+        const streak = this.calculateStreak(progress);
+        const completionRate = progress.length > 0
+          ? (progress.filter(p => p.completed).length / progress.length) * 100
+          : 0;
 
-      const weeklyProgress = await HabitProgress.findAll({
-        where: {
-          userId,
-          completionDate: {
-            [Op.gte]: weekAgo.toISOString().split('T')[0]
-          },
-          completionStatus: 'COMPLETED'
-        },
-        attributes: ['completionDate'],
-        group: ['completionDate'],
-        order: [['completionDate', 'ASC']]
+        return {
+          habitId: habit.id,
+          name: habit.name,
+          streak,
+          completionRate,
+          lastUpdated: progress.length > 0 ? progress[progress.length - 1].date : null
+        };
       });
-
-      // Get current streaks
-      const habitStreaks = habits.map(habit => ({
-        habitId: habit.habitId,
-        habitName: habit.habitName,
-        currentStreak: habit.currentStreak,
-        longestStreak: habit.longestStreak
-      }));
 
       res.json({
         success: true,
         data: {
-          habits,
-          statistics: {
-            totalHabits,
-            completedToday,
-            completionRate: totalHabits > 0 ? (completedToday / totalHabits * 100).toFixed(2) : 0,
-            weeklyCompletions: weeklyProgress.length
-          },
-          streaks: habitStreaks
+          totalHabits,
+          activeHabits,
+          completedHabits,
+          habitProgress,
+          user: {
+            name: user.name,
+            email: user.email,
+            joinDate: user.createdAt
+          }
         }
       });
     } catch (error) {
       next(error);
     }
+  }
+
+  calculateStreak(progress) {
+    if (!progress.length) return 0;
+
+    let streak = 0;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    for (let i = progress.length - 1; i >= 0; i--) {
+      const progressDate = new Date(progress[i].date);
+      progressDate.setHours(0, 0, 0, 0);
+
+      const daysDifference = Math.floor((today - progressDate) / (1000 * 60 * 60 * 24));
+
+      if (progress[i].completed) {
+        if (daysDifference === streak) {
+          streak++;
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+    return streak;
   }
 
   // Get user statistics

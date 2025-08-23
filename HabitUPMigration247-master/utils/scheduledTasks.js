@@ -21,6 +21,9 @@ class ScheduledTasks {
     // Clean up old messages (Every Sunday at 2 AM)
     this.scheduleMessageCleanup();
     
+    // Subscription expiry reminders (Every day at 10 AM)
+    this.scheduleSubscriptionReminders();
+
     console.log('✅ All scheduled tasks initialized');
   }
 
@@ -53,175 +56,246 @@ class ScheduledTasks {
           }]
         });
 
+        // Send reminders to users
         for (const user of usersWithIncompleteHabits) {
           const incompleteHabits = user.habits.filter(habit => 
-            habit.progress.length === 0 // No progress today
+            !habit.progress || !habit.progress.length
           );
 
           if (incompleteHabits.length > 0) {
-            const emailData = emailTemplates.habitReminder(user.name, incompleteHabits);
-            
-            await sendEmail({
-              to: user.email,
-              subject: emailData.subject,
-              html: emailData.html,
-              text: emailData.text
-            });
+            await sendEmail(user.email, emailTemplates.habitReminder({
+              name: user.name,
+              habits: incompleteHabits
+            }));
           }
         }
-        
-        console.log(`✅ Habit reminders sent to ${usersWithIncompleteHabits.length} users`);
+
+        console.log('✅ Daily habit reminders sent successfully');
       } catch (error) {
         console.error('❌ Error sending habit reminders:', error);
       }
+    }, {
+      timezone: 'Asia/Kolkata'
     });
   }
 
-  // Check for streak milestones
+  // Streak milestone check
   static scheduleStreakMilestones() {
     cron.schedule('0 22 * * *', async () => {
-      console.log('🔥 Checking for streak milestones...');
-      
+      console.log('🎯 Checking streak milestones...');
+
       try {
-        const today = new Date().toISOString().split('T')[0];
-        
-        // Get today's completed habits
-        const completedHabitsToday = await HabitProgress.findAll({
-          where: {
-            completionDate: today,
-            completionStatus: 'COMPLETED'
-          },
-          include: [
-            {
-              model: User,
-              as: 'user'
-            },
-            {
-              model: Habit,
-              as: 'habit'
-            }
-          ]
+        const users = await User.findAll({
+          include: [{
+            model: Habit,
+            as: 'habits',
+            where: { isActive: true },
+            include: ['progress']
+          }]
         });
 
-        for (const progress of completedHabitsToday) {
-          const { user, habit } = progress;
-          const streak = habit.currentStreak;
-          
-          // Send email for milestone streaks (7, 21, 30, 50, 100 days)
-          const milestones = [7, 21, 30, 50, 100];
-          
-          if (milestones.includes(streak)) {
-            const emailData = emailTemplates.streakMilestone(
-              user.name, 
-              habit.habitName, 
-              streak
+        const milestones = [7, 21, 30, 50, 100, 200, 365];
+
+        for (const user of users) {
+          for (const habit of user.habits) {
+            const currentStreak = habit.calculateStreak();
+            const previousStreak = habit.previousStreak || 0;
+
+            // Check if user hit a milestone
+            const achievedMilestone = milestones.find(m =>
+              previousStreak < m && currentStreak >= m
             );
-            
-            await sendEmail({
-              to: user.email,
-              subject: emailData.subject,
-              html: emailData.html,
-              text: emailData.text
-            });
+
+            if (achievedMilestone) {
+              // Create achievement notification
+              await Notification.create({
+                userId: user.userId,
+                type: 'ACHIEVEMENT_UNLOCKED',
+                title: 'Streak Milestone Achieved! 🎉',
+                message: `Congratulations! You've maintained your "${habit.name}" habit for ${achievedMilestone} days!`,
+                metadata: {
+                  habitId: habit.id,
+                  milestone: achievedMilestone,
+                  streak: currentStreak
+                }
+              });
+
+              // Send congratulatory email
+              await sendEmail(user.email, emailTemplates.streakMilestone({
+                name: user.name,
+                habitName: habit.name,
+                milestone: achievedMilestone
+              }));
+            }
+
+            // Update previous streak
+            await habit.update({ previousStreak: currentStreak });
           }
         }
-        
-        console.log(`✅ Streak milestone check completed for ${completedHabitsToday.length} habits`);
+
+        console.log('✅ Streak milestones checked successfully');
       } catch (error) {
         console.error('❌ Error checking streak milestones:', error);
       }
+    }, {
+      timezone: 'Asia/Kolkata'
     });
   }
 
   // Weekly progress summary
   static scheduleWeeklyProgressSummary() {
-    cron.schedule('0 20 * * 0', async () => { // Sunday 8 PM
-      console.log('📊 Sending weekly progress summaries...');
-      
+    cron.schedule('0 20 * * 0', async () => {
+      console.log('📊 Generating weekly progress summaries...');
+
       try {
-        const weekAgo = new Date();
-        weekAgo.setDate(weekAgo.getDate() - 7);
-        
         const users = await User.findAll({
-          where: { accountStatus: 'ACTIVE' },
           include: [{
             model: Habit,
             as: 'habits',
-            where: { isActive: true }
+            where: { isActive: true },
+            include: [{
+              model: HabitProgress,
+              as: 'progress',
+              where: {
+                completionDate: {
+                  [Op.gte]: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+                }
+              },
+              required: false
+            }]
           }]
         });
 
         for (const user of users) {
-          // Calculate weekly stats
-          const weeklyProgress = await HabitProgress.findAll({
-            where: {
-              userId: user.userId,
-              completionDate: {
-                [Op.gte]: weekAgo.toISOString().split('T')[0]
-              }
-            }
-          });
+          const habitStats = user.habits.map(habit => {
+            const totalDays = 7;
+            const completedDays = habit.progress.filter(p =>
+              p.completionStatus === 'COMPLETED'
+            ).length;
 
-          const completedCount = weeklyProgress.filter(p => p.completionStatus === 'COMPLETED').length;
-          const totalPossible = user.habits.length * 7;
-          const completionRate = totalPossible > 0 ? (completedCount / totalPossible * 100).toFixed(1) : 0;
+            return {
+              name: habit.name,
+              completionRate: (completedDays / totalDays) * 100,
+              streak: habit.calculateStreak(),
+              completedDays,
+              totalDays
+            };
+          });
 
           // Send weekly summary email
-          const emailContent = {
-            subject: `Your Weekly HabitUP Progress Summary 📊`,
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2>Hi ${user.name}!</h2>
-                <p>Here's your weekly progress summary:</p>
-                <ul>
-                  <li><strong>Completed Habits:</strong> ${completedCount}</li>
-                  <li><strong>Completion Rate:</strong> ${completionRate}%</li>
-                  <li><strong>Active Habits:</strong> ${user.habits.length}</li>
-                </ul>
-                <p>Keep up the great work!</p>
-                <a href="${process.env.CLIENT_URL}/dashboard" style="background: #fdc134; color: #315575; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Dashboard</a>
-              </div>
-            `,
-            text: `Weekly Progress: ${completedCount} habits completed (${completionRate}% completion rate)`
-          };
-
-          await sendEmail({
-            to: user.email,
-            subject: emailContent.subject,
-            html: emailContent.html,
-            text: emailContent.text
-          });
+          await sendEmail(user.email, emailTemplates.weeklyProgress({
+            name: user.name,
+            stats: habitStats,
+            weekStartDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+            weekEndDate: new Date()
+          }));
         }
-        
-        console.log(`✅ Weekly summaries sent to ${users.length} users`);
+
+        console.log('✅ Weekly progress summaries sent successfully');
       } catch (error) {
-        console.error('❌ Error sending weekly summaries:', error);
+        console.error('❌ Error generating weekly summaries:', error);
       }
+    }, {
+      timezone: 'Asia/Kolkata'
     });
   }
 
-  // Cleanup old messages
+  // Clean up old messages and notifications
   static scheduleMessageCleanup() {
-    cron.schedule('0 2 * * 0', async () => { // Sunday 2 AM
-      console.log('🧹 Cleaning up old messages...');
-      
+    cron.schedule('0 2 * * 0', async () => {
+      console.log('🧹 Cleaning up old messages and notifications...');
+
       try {
-        const sixMonthsAgo = new Date();
-        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-        
-        const deletedCount = await Message.destroy({
-          where: {
-            isDeleted: true,
-            deletedAt: {
-              [Op.lt]: sixMonthsAgo
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+
+        // Archive old messages
+        await sequelize.transaction(async (t) => {
+          // Move messages to archive
+          await sequelize.query(`
+            INSERT INTO message_archives 
+            SELECT * FROM messages 
+            WHERE created_at < :thirtyDaysAgo
+          `, {
+            replacements: { thirtyDaysAgo },
+            transaction: t
+          });
+
+          // Delete archived messages
+          await Message.destroy({
+            where: {
+              createdAt: { [Op.lt]: thirtyDaysAgo }
+            },
+            transaction: t
+          });
+
+          // Delete old notifications
+          await Notification.destroy({
+            where: {
+              createdAt: { [Op.lt]: ninetyDaysAgo },
+              isRead: true
             }
-          }
+          });
         });
-        
-        console.log(`✅ Cleaned up ${deletedCount} old messages`);
+
+        console.log('✅ Cleanup completed successfully');
       } catch (error) {
-        console.error('❌ Error cleaning up messages:', error);
+        console.error('❌ Error during cleanup:', error);
       }
+    }, {
+      timezone: 'Asia/Kolkata'
+    });
+  }
+
+  // Subscription expiry reminders
+  static scheduleSubscriptionReminders() {
+    cron.schedule('0 10 * * *', async () => {
+      console.log('💳 Checking subscription expiries...');
+
+      try {
+        const threeDaysFromNow = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+        const today = new Date();
+
+        const expiringSubscriptions = await Subscription.findAll({
+          where: {
+            endDate: {
+              [Op.between]: [today, threeDaysFromNow]
+            },
+            status: 'ACTIVE'
+          },
+          include: [{
+            model: User,
+            attributes: ['email', 'name']
+          }]
+        });
+
+        for (const subscription of expiringSubscriptions) {
+          // Create notification
+          await Notification.create({
+            userId: subscription.userId,
+            type: 'SUBSCRIPTION_EXPIRING',
+            title: 'Subscription Expiring Soon',
+            message: `Your subscription will expire on ${subscription.endDate.toLocaleDateString()}. Renew now to continue enjoying premium features!`,
+            metadata: {
+              subscriptionId: subscription.id,
+              expiryDate: subscription.endDate
+            }
+          });
+
+          // Send email reminder
+          await sendEmail(subscription.User.email, emailTemplates.subscriptionExpiry({
+            name: subscription.User.name,
+            expiryDate: subscription.endDate,
+            planType: subscription.planType
+          }));
+        }
+
+        console.log('✅ Subscription reminders sent successfully');
+      } catch (error) {
+        console.error('❌ Error checking subscriptions:', error);
+      }
+    }, {
+      timezone: 'Asia/Kolkata'
     });
   }
 

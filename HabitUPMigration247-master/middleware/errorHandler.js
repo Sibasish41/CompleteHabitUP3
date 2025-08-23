@@ -1,99 +1,86 @@
 // Custom API Error class
 class ApiError extends Error {
-  constructor(message, statusCode, details = null) {
+  constructor(message, statusCode = 400) {
     super(message);
     this.statusCode = statusCode;
-    this.details = details;
     this.status = `${statusCode}`.startsWith('4') ? 'fail' : 'error';
+    this.isOperational = true;
+
     Error.captureStackTrace(this, this.constructor);
   }
 }
 
 // Error Handler Middleware
 const errorHandler = (err, req, res, next) => {
-  console.error('Error:', {
-    message: err.message,
-    stack: err.stack,
-    timestamp: new Date().toISOString(),
-    path: req.originalUrl,
-    method: req.method
-  });
+  err.statusCode = err.statusCode || 500;
+  err.status = err.status || 'error';
 
-  // Default error
-  let error = { ...err };
-  error.message = err.message;
-  error.statusCode = err.statusCode || 500;
-
-  // Handle different types of errors
-  switch (err.name) {
-    case 'SequelizeValidationError':
-      error = new ApiError(
-        'Validation Error',
-        400,
-        err.errors.map(e => ({ field: e.path, message: e.message }))
-      );
-      break;
-
-    case 'SequelizeUniqueConstraintError':
-      const field = err.errors[0].path;
-      error = new ApiError(
-        `${field} already exists`,
-        400,
-        { field, value: err.errors[0].value }
-      );
-      break;
-
-    case 'JsonWebTokenError':
-      error = new ApiError('Invalid token', 401);
-      break;
-
-    case 'TokenExpiredError':
-      error = new ApiError('Token expired', 401);
-      break;
-
-    case 'SequelizeForeignKeyConstraintError':
-      error = new ApiError(
-        'Related record not found',
-        400,
-        { field: err.fields[0] }
-      );
-      break;
-
-    case 'SequelizeConnectionError':
-      error = new ApiError('Database connection error', 503);
-      break;
+  // Development error response
+  if (process.env.NODE_ENV === 'development') {
+    return res.status(err.statusCode).json({
+      success: false,
+      error: err,
+      message: err.message,
+      stack: err.stack
+    });
   }
 
-  // Handle file upload errors
-  if (err.code === 'LIMIT_FILE_SIZE') {
-    error = new ApiError('File too large', 400);
+  // Production error response
+  if (err.isOperational) {
+    return res.status(err.statusCode).json({
+      success: false,
+      message: err.message
+    });
   }
 
-  if (err.code === 'LIMIT_UNEXPECTED_FILE') {
-    error = new ApiError('Unexpected file upload', 400);
-  }
-
-  // Handle multer errors
-  if (err.code === 'LIMIT_PART_COUNT') {
-    error = new ApiError('Too many parts in multipart form', 400);
-  }
-
-  if (err.code === 'LIMIT_FILE_COUNT') {
-    error = new ApiError('Too many files uploaded', 400);
-  }
-
-  // Development vs Production error response
-  const response = {
+  // Programming or unknown errors: don't leak error details
+  console.error('ERROR 💥', err);
+  return res.status(500).json({
     success: false,
-    status: error.status || 'error',
-    message: error.message || 'Internal server error',
-    ...(process.env.NODE_ENV === 'development' && {
-      details: error.details || null,
-      stack: error.stack
-    })
-  };
-
-  res.status(error.statusCode || 500).json(response);
+    message: 'Something went wrong!'
+  });
 };
 
-module.exports = { ApiError, errorHandler };
+// Handle Sequelize validation errors
+const handleSequelizeError = (err) => {
+  if (err.name === 'SequelizeValidationError' || err.name === 'SequelizeUniqueConstraintError') {
+    const errors = err.errors.map(error => error.message);
+    return new ApiError(errors[0], 400);
+  }
+  return err;
+};
+
+// Handle JWT errors
+const handleJWTError = (err) => {
+  if (err.name === 'JsonWebTokenError') {
+    return new ApiError('Invalid token. Please log in again.', 401);
+  }
+  if (err.name === 'TokenExpiredError') {
+    return new ApiError('Your token has expired. Please log in again.', 401);
+  }
+  return err;
+};
+
+// Handle multer errors
+const handleMulterError = (err) => {
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return new ApiError('File size too large. Maximum size is 5MB.', 400);
+  }
+  if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+    return new ApiError('Unexpected field in file upload.', 400);
+  }
+  return err;
+};
+
+module.exports = {
+  ApiError,
+  errorHandler: [
+    (err, req, res, next) => {
+      err = handleSequelizeError(err);
+      err = handleJWTError(err);
+      err = handleMulterError(err);
+      next(err);
+    },
+    errorHandler
+  ]
+};

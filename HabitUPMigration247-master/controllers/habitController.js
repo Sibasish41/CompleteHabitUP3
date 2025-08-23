@@ -243,6 +243,61 @@ class HabitController {
     }
   }
 
+  // Toggle habit completion for today
+  async toggleHabitCompletion(req, res, next) {
+    try {
+      const { habitId } = req.params;
+      const userId = req.user.userId;
+      const today = new Date().toISOString().split('T')[0];
+
+      // Check if habit exists and belongs to user
+      const habit = await Habit.findOne({
+        where: { habitId },
+        include: [{
+          model: User,
+          as: 'users',
+          where: { userId },
+          attributes: [],
+          through: { attributes: [] }
+        }]
+      });
+
+      if (!habit) {
+        return next(new ApiError('Habit not found', 404));
+      }
+
+      // Find or create today's progress
+      const [progress, created] = await HabitProgress.findOrCreate({
+        where: {
+          habitId,
+          userId,
+          date: today
+        },
+        defaults: {
+          completed: true
+        }
+      });
+
+      if (!created) {
+        // Toggle completion status if record exists
+        await progress.update({ completed: !progress.completed });
+      }
+
+      // Update habit streak
+      await this.updateHabitStreak(habit, userId);
+
+      res.json({
+        success: true,
+        data: {
+          completed: created ? true : !progress.completed,
+          date: today
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // Get habit progress/statistics
   async getHabitProgress(req, res, next) {
     try {
@@ -522,61 +577,117 @@ class HabitController {
     }
   }
 
-  // Helper method to update habit streak
-  async updateHabitStreak(habitId, userId) {
+  // Get habit statistics
+  async getHabitStats(req, res, next) {
     try {
-      const habit = await Habit.findByPk(habitId);
-      if (!habit) return;
+      const userId = req.user.userId;
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-      // Get recent progress to calculate streak
-      const recentProgress = await HabitProgress.findAll({
-        where: { userId, habitId },
-        order: [['completionDate', 'DESC']],
-        limit: 365 // Check last year
+      const stats = await HabitProgress.findAll({
+        where: {
+          userId,
+          date: {
+            [Op.gte]: thirtyDaysAgo.toISOString().split('T')[0]
+          }
+        },
+        include: [{
+          model: Habit,
+          required: true
+        }]
+      });
+
+      const totalHabits = await Habit.count({
+        include: [{
+          model: User,
+          as: 'users',
+          where: { userId },
+          attributes: [],
+          through: { attributes: [] }
+        }]
+      });
+
+      // Calculate completion rates and streaks
+      const habitStats = {};
+      stats.forEach(progress => {
+        if (!habitStats[progress.habitId]) {
+          habitStats[progress.habitId] = {
+            name: progress.Habit.name,
+            totalDays: 0,
+            completedDays: 0,
+            currentStreak: 0,
+            longestStreak: progress.Habit.longestStreak || 0
+          };
+        }
+
+        habitStats[progress.habitId].totalDays++;
+        if (progress.completed) {
+          habitStats[progress.habitId].completedDays++;
+        }
+      });
+
+      const overallStats = {
+        totalHabits,
+        activeHabits: Object.keys(habitStats).length,
+        completionRate: this.calculateCompletionRate(stats),
+        habitDetails: habitStats
+      };
+
+      res.json({
+        success: true,
+        data: overallStats
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Helper method to update habit streak
+  async updateHabitStreak(habit, userId) {
+    try {
+      const progress = await HabitProgress.findAll({
+        where: {
+          habitId: habit.habitId,
+          userId,
+          completed: true
+        },
+        order: [['date', 'DESC']]
       });
 
       let currentStreak = 0;
-      let longestStreak = 0;
-      let tempStreak = 0;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
-      // Calculate current streak (from today backwards)
-      const today = new Date().toISOString().split('T')[0];
-      let checkDate = new Date();
+      for (let i = 0; i < progress.length; i++) {
+        const progressDate = new Date(progress[i].date);
+        progressDate.setHours(0, 0, 0, 0);
 
-      for (let i = 0; i < recentProgress.length; i++) {
-        const progressDate = recentProgress[i].completionDate;
-        const expectedDate = checkDate.toISOString().split('T')[0];
+        const daysDiff = Math.floor((today - progressDate) / (1000 * 60 * 60 * 24));
 
-        if (progressDate === expectedDate && recentProgress[i].completionStatus === 'COMPLETED') {
-          if (progressDate === today || i === 0) {
-            currentStreak++;
-          }
-          tempStreak++;
-          checkDate.setDate(checkDate.getDate() - 1);
+        if (daysDiff === currentStreak) {
+          currentStreak++;
         } else {
-          if (tempStreak > longestStreak) {
-            longestStreak = tempStreak;
-          }
-          tempStreak = 0;
-          if (progressDate !== expectedDate) {
-            break; // Gap in streak
-          }
+          break;
         }
       }
 
-      if (tempStreak > longestStreak) {
-        longestStreak = tempStreak;
-      }
-
-      // Update habit with new streak values
       await habit.update({
         currentStreak,
-        longestStreak: Math.max(longestStreak, habit.longestStreak)
+        longestStreak: Math.max(currentStreak, habit.longestStreak || 0)
       });
 
+      return currentStreak;
     } catch (error) {
-      console.error('Error updating habit streak:', error);
+      console.error('Error updating streak:', error);
+      throw error;
     }
+  }
+
+  // Helper function to calculate completion rate
+  calculateCompletionRate(progressData) {
+    if (!progressData.length) return 0;
+    const completed = progressData.filter(p => p.completed).length;
+    return (completed / progressData.length) * 100;
   }
 }
 
