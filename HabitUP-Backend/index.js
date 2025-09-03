@@ -11,18 +11,11 @@ const environment = require('./utils/environment');
 const config = environment.getConfig();
 
 // Import routes
-const authRoutes = require('./routes/auth');
-const userRoutes = require('./routes/user');
-const habitRoutes = require('./routes/habit');
-const adminRoutes = require('./routes/admin');
-const doctorRoutes = require('./routes/doctor');
-const subscriptionRoutes = require('./routes/subscription');
-const paymentRoutes = require('./routes/payment');
-const meetingRoutes = require('./routes/meeting');
-const messageRoutes = require('./routes/message');
-const feedbackRoutes = require('./routes/feedback');
-const dailyThoughtRoutes = require('./routes/dailyThought');
-const systemSettingsRoutes = require('./routes/systemSettings');
+const {
+  authRoutes, userRoutes, habitRoutes, adminRoutes, doctorRoutes,
+  subscriptionRoutes, paymentRoutes, meetingRoutes, messageRoutes,
+  feedbackRoutes, dailyThoughtRoutes, systemSettingsRoutes
+} = require('./routes');
 
 // Import middleware
 const { errorHandler } = require('./middleware/errorHandler');
@@ -42,7 +35,16 @@ const PORT = config.port;
 const limiter = rateLimit({
   windowMs: config.rateLimiting.windowMs,
   max: config.rateLimiting.max,
-  message: 'Too many requests from this IP, please try again later.'
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  handler: (req, res, _next, options) => { // _next indicates it's intentionally unused
+    environment.warn(`Rate limit exceeded for IP: ${req.ip}. Path: ${req.path}`);
+    res.status(options.statusCode).json({
+      status: 'error',
+      message: options.message
+    });
+  },
+  message: 'Too many requests from this IP, please try again later.',
 });
 
 // Middleware
@@ -54,7 +56,7 @@ app.use(cors({
     // Allow requests with no origin (mobile apps, postman, etc.)
     if (!origin) return callback(null, true);
     
-    if (config.cors.origins.indexOf(origin) !== -1) {
+    if (config.cors.origins.includes(origin)) {
       callback(null, true);
     } else {
       environment.warn(`CORS blocked origin: ${origin}`);
@@ -65,7 +67,10 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
-app.use(morgan('combined'));
+
+// Use 'dev' format for logging in development for better readability, 'combined' in production
+const morganFormat = environment.isProduction() ? 'combined' : 'dev';
+app.use(morgan(morganFormat));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(limiter);
@@ -82,19 +87,27 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API Routes
+// --- API Routes ---
+
+// Public routes (no authentication required)
 app.use('/api/auth', authRoutes);
-app.use('/api/user', authenticateToken, userRoutes);
-app.use('/api/habit', authenticateToken, habitRoutes);
-app.use('/api/admin', authenticateToken, adminRoutes);
-app.use('/api/doctor', authenticateToken, doctorRoutes);
-app.use('/api/subscription', authenticateToken, subscriptionRoutes);
-app.use('/api/payment', authenticateToken, paymentRoutes);
-app.use('/api/meeting', authenticateToken, meetingRoutes);
-app.use('/api/message', authenticateToken, messageRoutes);
-app.use('/api/feedback', authenticateToken, feedbackRoutes);
-app.use('/api/daily-thought', authenticateToken, dailyThoughtRoutes);
 app.use('/api/system-settings', systemSettingsRoutes);
+
+// Protected routes (authentication required)
+const protectedRouter = express.Router();
+protectedRouter.use(authenticateToken); // Apply auth middleware to all routes in this router
+protectedRouter.use('/user', userRoutes);
+protectedRouter.use('/habit', habitRoutes);
+protectedRouter.use('/admin', adminRoutes);
+protectedRouter.use('/doctor', doctorRoutes);
+protectedRouter.use('/subscription', subscriptionRoutes);
+protectedRouter.use('/payment', paymentRoutes);
+protectedRouter.use('/meeting', meetingRoutes);
+protectedRouter.use('/message', messageRoutes);
+protectedRouter.use('/feedback', feedbackRoutes);
+protectedRouter.use('/daily-thought', dailyThoughtRoutes);
+
+app.use('/api', protectedRouter);
 
 // Error handling middleware
 app.use(errorHandler);
@@ -110,12 +123,13 @@ const startServer = async () => {
     // Validate environment variables
     environment.validateRequired();
     
+    const { database, cors, rateLimiting } = config;
     environment.log('🔧 Configuration loaded:', {
       environment: environment.getEnv(),
       port: PORT,
-      database: config.database.name,
-      corsOrigins: config.cors.origins,
-      rateLimiting: config.rateLimiting
+      database: database.name,
+      corsOrigins: cors.origins,
+      rateLimiting: rateLimiting
     });
     
     // Test database connection

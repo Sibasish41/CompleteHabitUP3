@@ -2,6 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const { User } = require('../models');
+const { handleValidationErrors } = require('../middleware/validation');
 const { ApiError } = require('../middleware/errorHandler');
 
 const router = express.Router();
@@ -14,16 +15,8 @@ router.post('/register', [
   body('phoneNo').isLength({ min: 10 }).withMessage('Phone number must be at least 10 digits'),
   body('dob').notEmpty().withMessage('Date of birth is required'),
   body('gender').isIn(['MALE', 'FEMALE', 'OTHER']).withMessage('Invalid gender')
-], async (req, res, next) => {
+], handleValidationErrors, async (req, res, next) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        message: 'Validation Error',
-        errors: errors.array()
-      });
-    }
-
     const { email, name, password, phoneNo, dob, gender } = req.body;
 
     // Check if user already exists
@@ -80,16 +73,8 @@ router.post('/register', [
 router.post('/login', [
   body('email').isEmail().withMessage('Please provide a valid email'),
   body('password').notEmpty().withMessage('Password is required')
-], async (req, res, next) => {
+], handleValidationErrors, async (req, res, next) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        message: 'Validation Error',
-        errors: errors.array()
-      });
-    }
-
     const { email, password } = req.body;
 
     // Find user by email
@@ -170,16 +155,8 @@ router.get('/verify', async (req, res, next) => {
 // Request password reset
 router.post('/forgot-password', [
   body('email').isEmail().withMessage('Please provide a valid email')
-], async (req, res, next) => {
+], handleValidationErrors, async (req, res, next) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        message: 'Validation Error',
-        errors: errors.array()
-      });
-    }
-
     const { email } = req.body;
     const { PasswordResetToken } = require('../models');
     const { sendEmail } = require('../utils/emailService');
@@ -227,41 +204,38 @@ router.post('/forgot-password', [
 router.post('/reset-password', [
   body('token').notEmpty().withMessage('Reset token is required'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters')
-], async (req, res, next) => {
+], handleValidationErrors, async (req, res, next) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        message: 'Validation Error',
-        errors: errors.array()
-      });
-    }
-
+    // Get the sequelize instance from one of the models to create a transaction
+    const sequelize = User.sequelize;
     const { token, password } = req.body;
-    const { PasswordResetToken } = require('../models');
-    const { Op } = require('sequelize');
 
-    // Find valid reset token
-    const resetTokenRecord = await PasswordResetToken.findOne({
-      where: {
-        token,
-        expiresAt: { [Op.gt]: new Date() },
-        isUsed: false
-      },
-      include: [{ model: User, as: 'user' }]
+    await sequelize.transaction(async (t) => {
+      const { PasswordResetToken } = require('../models');
+      const { Op } = require('sequelize');
+
+      // Find valid reset token within the transaction
+      const resetTokenRecord = await PasswordResetToken.findOne({
+        where: {
+          token,
+          expiresAt: { [Op.gt]: new Date() },
+          isUsed: false
+        },
+        include: [{ model: User, as: 'user' }], //Perform JOIN to User table
+        transaction: t // Ensure this read is part of the transaction
+      });
+
+      if (!resetTokenRecord) {
+        // Throwing an error inside a transaction will automatically roll it back.
+        throw new ApiError('Invalid or expired reset token', 400);
+      }
+
+      const user = resetTokenRecord.user;
+      
+      // Update password and mark token as used within the same transaction
+      await user.update({ password }, { transaction: t });
+      await resetTokenRecord.update({ isUsed: true }, { transaction: t });
     });
-
-    if (!resetTokenRecord) {
-      return next(new ApiError('Invalid or expired reset token', 400));
-    }
-
-    const user = resetTokenRecord.user;
-    
-    // Update password
-    await user.update({ password });
-    
-    // Mark token as used
-    await resetTokenRecord.update({ isUsed: true });
 
     res.json({
       message: 'Password reset successfully'

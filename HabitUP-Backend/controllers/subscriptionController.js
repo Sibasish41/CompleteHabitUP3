@@ -1,67 +1,5 @@
-          attributes: ['userId', 'username', 'email', 'firstName', 'lastName']
-        }
-      ],
-      throw new ApiError('Active subscription not found', 404);
+const { Subscription, SubscriptionPlan, User, Payment, ApiError } = require('../models');
 
-    res.json({
-    // Calculate refund if applicable
-    const refundAmount = await calculateRefundAmount(subscription);
-      message: 'Error fetching subscriptions',
-    // Process refund if amount > 0
-    if (refundAmount > 0) {
-      const refund = await razorpayService.createRefund(
-        subscription.paymentId,
-        refundAmount
-      );
-
-      await Payment.create({
-        userId,
-        amount: refundAmount,
-        status: 'REFUNDED',
-        paymentId: refund.id,
-        subscriptionId: subscription.id,
-        type: 'REFUND'
-      where: { userId },
-      order: [['createdAt', 'DESC']]
-    });
-    // Update subscription status
-
-      status: 'CANCELLED',
-      cancelledAt: new Date(),
-      refundAmount
-    });
-
-    // Update user subscription status
-    await User.update(
-      { subscriptionStatus: 'CANCELLED' },
-      { where: { userId } }
-    );
-  } catch (error) {
-    console.error('Error fetching user subscriptions:', error);
-    res.status(500).json({
-      success: false,
-      data: {
-        subscription,
-        refundAmount
-      }
-      error: error.message
-    });
-  }
-    if (error instanceof ApiError) {
-      res.status(error.statusCode).json({
-    if (!activeSubscription) {
-        message: error.message
-        success: false,
-    } else {
-      res.status(500).json({
-        success: false,
-        message: 'Error cancelling subscription',
-        error: error.message
-      });
-    }
-    const userId = req.user.userId;
-
-    // Check for existing active subscription
 // Helper function to calculate plan details
 const calculatePlanDetails = async (planType, duration) => {
   const baseRates = {
@@ -69,7 +7,6 @@ const calculatePlanDetails = async (planType, duration) => {
     PREMIUM: 199,
     PROFESSIONAL: 399
   };
-    const planDetails = await calculatePlanDetails(planType, duration);
   const features = {
     BASIC: ['Habit Tracking', 'Basic Analytics', 'Email Support'],
     PREMIUM: ['All Basic Features', 'Advanced Analytics', 'Priority Support', 'Doctor Consultation'],
@@ -82,20 +19,18 @@ const calculatePlanDetails = async (planType, duration) => {
     6: 5.1,  // Half-yearly (15% discount)
     12: 9.6  // Yearly (20% discount)
   };
-    const subscription = await Subscription.create({
   const baseAmount = baseRates[planType];
   const amount = Math.round(baseAmount * durationMultiplier[duration]);
 
   const endDate = new Date();
   endDate.setMonth(endDate.getMonth() + duration);
-  } catch (error) {
   return {
     amount,
     endDate,
     features: features[planType]
   };
-    }
-  }
+};
+
 // Helper function to calculate refund amount
 const calculateRefundAmount = async (subscription) => {
   const now = new Date();
@@ -112,19 +47,11 @@ const calculateRefundAmount = async (subscription) => {
 
     const refundAmount = Math.round((remainingDays / totalDays) * subscription.amount);
     return Math.max(0, refundAmount);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating subscription',
-      error: error.message
-    });
+  }
+};
 
-
-  cancelSubscription
-    if (!subscription) {
-      throw new ApiError('Subscription not found', 404);
-    }
-
-    // Update subscription status based on payment
+const handleSubscriptionWebhook = async (req, res) => {
+  try {
     if (payment.status === 'captured') {
       await subscription.update({
         status: 'ACTIVE',
@@ -179,19 +106,100 @@ const calculateRefundAmount = async (subscription) => {
   }
 };
 
-// Cancel subscription
 const cancelSubscription = async (req, res) => {
   try {
     const { subscriptionId } = req.params;
     const userId = req.user.userId;
 
     const subscription = await Subscription.findOne({
-      where: {
-        id: subscriptionId,
-        userId,
-        status: 'ACTIVE'
-      }
+      where: { id: subscriptionId, userId, status: 'ACTIVE' }
+    });
 
+    if (!subscription) {
+      throw new ApiError('Active subscription not found', 404);
+    }
+
+    // Calculate refund if applicable
+    const refundAmount = await calculateRefundAmount(subscription);
+
+    // Process refund if amount > 0
+    if (refundAmount > 0) {
+      const refund = await razorpayService.createRefund(
+        subscription.paymentId,
+        refundAmount
+      );
+
+      await Payment.create({
+        userId,
+        amount: refundAmount,
+        status: 'REFUNDED',
+        paymentId: refund.id,
+        subscriptionId: subscription.id,
+        type: 'REFUND'
+      });
+    }
+
+    // Update subscription status
+    await subscription.update({
+      status: 'CANCELLED',
+      cancelledAt: new Date(),
+      refundAmount
+    });
+
+    // Update user subscription status
+    await User.update(
+      { subscriptionStatus: 'CANCELLED' },
+      { where: { userId } }
+    );
+
+    res.json({
+      success: true,
+      message: 'Subscription cancelled successfully',
+      data: {
+        subscription,
+        refundAmount
+      }
+    });
+  } catch (error) {
+    console.error('Error cancelling subscription:', error);
+    if (error instanceof ApiError) {
+      res.status(error.statusCode).json({
+        success: false,
+        message: error.message
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Error cancelling subscription',
+        error: error.message
+      });
+    }
+  }
+};
+
+const getSubscriptionPlans = async (req, res) => {
+  try {
+    // Assuming you have a SubscriptionPlan model
+    const plans = await SubscriptionPlan.findAll({
+      order: [['amount', 'ASC']] // Assuming the plan model has an 'amount' or 'price' field
+    });
+
+    res.json({
+      success: true,
+      data: plans
+    });
+  } catch (error) {
+    console.error('Error fetching subscription plans:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching subscription plans'
+    });
+  }
+};
+
+const deleteSubscriptionPlan = async (req, res) => {
+  try {
+    // ... implementation for deleting a plan
     res.json({
       success: true,
       message: 'Subscription plan deleted successfully'
@@ -212,7 +220,7 @@ const getSubscriptionById = async (req, res) => {
     const subscription = await Subscription.findByPk(id, {
       include: [{
         model: User,
-        attributes: ['userId', 'name', 'email']
+        attributes: ['userId', 'username', 'email', 'firstName', 'lastName']
       }]
     });
 
@@ -314,7 +322,7 @@ const getExpiredSubscriptions = async (req, res) => {
         endDate: {
           [Op.lt]: new Date()
         },
-        status: ['active', 'past_due']
+        status: ['ACTIVE', 'PAST_DUE'] // Assuming these are the status strings
       },
       include: [{
         model: User,
@@ -407,31 +415,42 @@ const bulkExtendSubscriptions = async (req, res) => {
 };
 
 module.exports = {
-  getAllSubscriptions,
-  getUserSubscriptions,
-  getCurrentSubscription,
-  createSubscription,
-  updateSubscription,
-  cancelSubscription,
-  activateSubscription,
-  getSubscriptionAnalytics,
-  handleSubscriptionWebhook,
-  getSubscriptionPlans,
-  getSubscriptionPlanById,
-  getUserSubscription,
-  subscribeUser,
-  getSubscriptionHistory,
-  checkSubscriptionStatus,
-  renewSubscription,
-  changeSubscription,
-  getSubscriptionsByStatus,
-  createSubscriptionPlan,
-  updateSubscriptionPlan,
-  deleteSubscriptionPlan,
-  getSubscriptionById,
-  adminCancelSubscription,
-  extendSubscription,
-  getExpiredSubscriptions,
+  // Make sure to export all functions you want to use in your routes
+  bulkExtendSubscriptions,
   bulkCancelSubscriptions,
-  bulkExtendSubscriptions
+  getExpiredSubscriptions,
+  getSubscriptionById,
+  extendSubscription,
+  adminCancelSubscription,
+  deleteSubscriptionPlan,
+  cancelSubscription,
+  handleSubscriptionWebhook,
+  getSubscriptionPlans
+  // getAllSubscriptions,
+  // getUserSubscriptions,
+  // getCurrentSubscription,
+  // createSubscription,
+  // updateSubscription,
+  // cancelSubscription,
+  // activateSubscription,
+  // getSubscriptionAnalytics,
+  // handleSubscriptionWebhook,
+  // getSubscriptionPlans,
+  // getSubscriptionPlanById,
+  // getUserSubscription,
+  // subscribeUser,
+  // getSubscriptionHistory,
+  // checkSubscriptionStatus,
+  // renewSubscription,
+  // changeSubscription,
+  // getSubscriptionsByStatus,
+  // createSubscriptionPlan,
+  // updateSubscriptionPlan,
+  // deleteSubscriptionPlan,
+  // getSubscriptionById,
+  // adminCancelSubscription,
+  // extendSubscription,
+  // getExpiredSubscriptions,
+  // bulkCancelSubscriptions,
+  // bulkExtendSubscriptions
 };
