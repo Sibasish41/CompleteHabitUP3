@@ -6,13 +6,15 @@ const { adminMiddleware } = require('../middleware/admin');
 const { validateSubscription, validateSubscriptionUpdate } = require('../middleware/validation');
 
 // Public routes
+//done
 router.get('/plans', subscriptionController.getSubscriptionPlans);
+//done
 router.get('/plans/:id', subscriptionController.getSubscriptionPlanById);
 
 // User routes (require authentication)
 router.use(authenticateToken);
 
-// Get user's current subscription
+// Get user's current subscription(done)
 router.get('/current', subscriptionController.getUserSubscription);
 
 // Subscribe to a plan
@@ -21,7 +23,7 @@ router.post('/subscribe/:planId', subscriptionController.subscribeUser);
 // Update subscription
 router.put('/update/:planId', subscriptionController.updateSubscription);
 
-// Cancel subscription
+// Cancel subscription(done)
 router.delete('/cancel', subscriptionController.cancelSubscription);
 
 // Get subscription history
